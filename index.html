@@ -1132,6 +1132,29 @@
             return sprite;
         };
 
+        // Texture peinte directement sur le dessus d'une case (au lieu d'un
+        // numéro flottant/carte qui "ressort" au-dessus du plateau).
+        const makeTileTopTexture = (label, colorHex) => {
+            const canvas = document.createElement('canvas');
+            const size = 128;
+            canvas.width = size;
+            canvas.height = size;
+            const ctx2d = canvas.getContext('2d');
+            ctx2d.fillStyle = '#' + colorHex.toString(16).padStart(6, '0');
+            ctx2d.fillRect(0, 0, size, size);
+            ctx2d.strokeStyle = 'rgba(0,0,0,0.18)';
+            ctx2d.lineWidth = 5;
+            ctx2d.strokeRect(2.5, 2.5, size - 5, size - 5);
+            ctx2d.fillStyle = '#1c1917';
+            ctx2d.font = `bold ${label.length > 3 ? 30 : 46}px sans-serif`;
+            ctx2d.textAlign = 'center';
+            ctx2d.textBaseline = 'middle';
+            ctx2d.fillText(label, size / 2, size / 2);
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.needsUpdate = true;
+            return texture;
+        };
+
         const computeSpiralPositions3D = (boardSize) => {
             // Même algorithme de spirale que l'ancien plateau 2D, mais sur le plan X/Z.
             const positions = [];
@@ -1251,15 +1274,16 @@
             board.forEach((square, i) => {
                 const pos = positions[i];
                 const color = TILE_COLORS_3D[square.type] || TILE_COLORS_3D.normal;
-                const tile = new THREE.Mesh(tileGeo, new THREE.MeshStandardMaterial({ color, roughness: 0.75 }));
+                const label = square.number === 1 ? 'Départ' : (square.number === board.length ? 'Arrivée' : String(square.number));
+
+                const sideMat = new THREE.MeshStandardMaterial({ color, roughness: 0.8 });
+                const topMat = new THREE.MeshStandardMaterial({ map: makeTileTopTexture(label, color), roughness: 0.6 });
+                // Ordre des faces d'un THREE.BoxGeometry : +x, -x, +y (dessus), -y, +z, -z
+                const materials = [sideMat, sideMat, topMat, sideMat, sideMat, sideMat];
+
+                const tile = new THREE.Mesh(tileGeo, materials);
                 tile.position.set(pos.x, 0, pos.z);
                 ctx.tileGroup.add(tile);
-
-                const label = square.number === 1 ? 'Départ' : (square.number === board.length ? 'Arrivée' : String(square.number));
-                const sprite = makeLabelSprite(label, { fontSize: label.length > 3 ? 32 : 52 });
-                sprite.scale.set(0.85, 0.85, 1);
-                sprite.position.set(pos.x, 0.32, pos.z);
-                ctx.tileGroup.add(sprite);
             });
 
             const box = new THREE.Box3().setFromObject(ctx.tileGroup);
