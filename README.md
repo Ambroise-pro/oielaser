@@ -4,9 +4,12 @@ Application web statique (HTML/CSS/JS, sans build) pour animer une séance de
 Laser Run façon "jeu de l'oie" en classe.
 
 - `index.html` — le jeu principal : le professeur crée une partie, les élèves
-  rejoignent en équipe de 2 via un QR code, et progressent sur le plateau en
-  fonction de leurs tirs laser. Synchronisation en temps réel via Firebase
-  (Firestore) et authentification anonyme.
+  rejoignent en équipe de 2 via un QR code, et progressent sur un plateau 3D
+  (Three.js, avec pions 3D, caméra orbitale à la souris/au doigt) en fonction
+  de leurs tirs laser. Synchronisation en temps réel via Firebase (Firestore)
+  et authentification anonyme. Les boutons d'action (tir, validation, etc.)
+  sont protégés contre les double-déclenchements (rebond du bouton laser,
+  double-clic).
 - `chrono.html` — un chronomètre solo pour une course Laser Run individuelle
   (tours de course + sessions de tir), indépendant de Firebase.
 - `oielogo.jpeg` — logo affiché sur la page d'accueil.

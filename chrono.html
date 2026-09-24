@@ -701,6 +701,26 @@
         }
 
 
+        // Empêche un bouton de déclencher son action plusieurs fois de suite
+        // pour un seul appui (rebond du déclencheur laser, double-clic/double-tap).
+        function debounce(fn, cooldownMs = 350) {
+            let lockedUntil = 0;
+            return function (...args) {
+                const now = performance.now();
+                if (now < lockedUntil) return;
+                lockedUntil = now + cooldownMs;
+                return fn.apply(this, args);
+            };
+        }
+
+        startRace = debounce(startRace, 500);
+        transitionToShooting = debounce(transitionToShooting, 400);
+        handleShotMissed = debounce(handleShotMissed, 200);
+        handleShotHit = debounce(handleShotHit, 200);
+        finishShootingOrRace = debounce(finishShootingOrRace, 400);
+        resetRaceConfirmation = debounce(resetRaceConfirmation, 600);
+        setupAnotherRace = debounce(setupAnotherRace, 600);
+
         // Initialisation au chargement de la page
         document.addEventListener('DOMContentLoaded', () => {
             updateUIState();

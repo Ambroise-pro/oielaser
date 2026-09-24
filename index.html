@@ -11,40 +11,38 @@
     <script src="https://www.gstatic.com/firebasejs/10.6.0/firebase-firestore-compat.js"></script>
     <!-- Génération de QR codes -->
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js"></script>
+    <!-- Plateau de jeu et pions en 3D -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         }
-        .case {
-            position: absolute;
-            width: 35px;
-            height: 35px;
-            border: 1px solid black;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 12px;
+        #game-board {
+            min-height: 360px;
+            overflow: hidden;
         }
-        .bonus { background-color: #4ade80; }
-        .malus { background-color: #f87171; }
-        .start { background-color: #34d399; }
-        .end { background-color: #fbbf24; }
-        .my-team-pawn {
-            transform: scale(1.5);
-            z-index: 10;
-            border: 2px solid gold !important;
+        .board3d-canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: grab;
+            border-radius: 0.75rem;
         }
-        .pawn-name-label {
+        .board3d-canvas:active {
+            cursor: grabbing;
+        }
+        .board3d-hint {
             position: absolute;
-            bottom: 120%;
+            bottom: 6px;
             left: 50%;
             transform: translateX(-50%);
-            background-color: rgba(0, 0, 0, 0.75);
-            color: white;
-            padding: 2px 5px;
-            border-radius: 4px;
-            font-size: 10px;
-            white-space: nowrap;
+            font-size: 11px;
+            color: #78716c;
+            background: rgba(255,255,255,0.7);
+            padding: 2px 8px;
+            border-radius: 999px;
+            pointer-events: none;
         }
         .led-indicator {
             width: 20px;
@@ -224,6 +222,25 @@
             renderPage();
         };
 
+        // Empêche un même bouton d'action de déclencher plusieurs fois de suite
+        // (rebond matériel sur le déclencheur laser, double-clic, double-tap...).
+        // Le bouton reste "verrouillé" tant que l'action est en cours, puis pendant
+        // un court délai supplémentaire après sa fin.
+        const withGuard = (fn, minCooldownMs = 350) => {
+            let busy = false;
+            return async (...args) => {
+                if (busy) return;
+                busy = true;
+                const start = performance.now();
+                try {
+                    return await fn(...args);
+                } finally {
+                    const remaining = Math.max(0, minCooldownMs - (performance.now() - start));
+                    setTimeout(() => { busy = false; }, remaining);
+                }
+            };
+        };
+
         let timerInterval = null;
 
         const updateTimer = () => {
@@ -354,7 +371,7 @@
         };
 
         // Logique du jeu
-        const createGame = async () => {
+        const createGame = withGuard(async () => {
             const boardSize = parseInt(document.getElementById('board-size-select').value, 10);
             const newBoard = generateSpiralBoard(boardSize);
             const newGameId = generateRandomId();
@@ -378,7 +395,7 @@
                 console.error("Erreur de création:", e);
                 showMessage("Impossible de créer la partie.");
             }
-        };
+        }, 600);
 
         const generateSpiralBoard = (size) => {
             const board = [];
@@ -401,7 +418,7 @@
             return board;
         };
 
-        const createTeam = async () => {
+        const createTeam = withGuard(async () => {
             const player1Name = document.getElementById('player1-name-input').value.trim();
             const player2Name = document.getElementById('player2-name-input').value.trim();
 
@@ -447,9 +464,9 @@
                 console.error("Erreur en créant l'équipe:", e);
                 showMessage("Impossible de créer l'équipe.");
             }
-        };
+        }, 600);
 
-        const deleteTeam = async (teamIdToDelete) => {
+        const deleteTeam = withGuard(async (teamIdToDelete) => {
             const confirmation = confirm("Êtes-vous sûr de vouloir supprimer cette équipe ?");
             if (!confirmation) return;
 
@@ -467,9 +484,9 @@
                 console.error("Erreur lors de la suppression de l'équipe:", e);
                 showMessage("Impossible de supprimer l'équipe.");
             }
-        };
+        }, 400);
 
-        const startGame = async () => {
+        const startGame = withGuard(async () => {
             if (!gameData || gameData.teams.length === 0) {
                 showMessage("Il n'y a pas d'équipes pour démarrer la partie.");
                 return;
@@ -483,7 +500,7 @@
                 startTime: firebase.firestore.FieldValue.serverTimestamp(),
                 teams: updatedTeams
             });
-        };
+        }, 600);
 
         const endPlayerTurn = (player) => {
             if (player.roundScore !== null) return;
@@ -539,7 +556,7 @@
             team.lastArrowTimestamp = new Date().getTime();
         };
 
-        const recordLaserShot = async (shotType) => {
+        const recordLaserShot = withGuard(async (shotType) => {
             try {
                 const gameDocRef = db.collection('games').doc(gameId);
                 await db.runTransaction(async (transaction) => {
@@ -578,9 +595,9 @@
                 console.error("Erreur lors de l'enregistrement du tir:", error);
                 showMessage(`Une erreur est survenue: ${error.message}`);
             }
-        };
+        }, 250);
 
-        const validateScore = async () => {
+        const validateScore = withGuard(async () => {
             try {
                 const gameDocRef = db.collection('games').doc(gameId);
                 await db.runTransaction(async (transaction) => {
@@ -607,20 +624,20 @@
                 console.error("Erreur validation:", error);
                 showMessage(`Une erreur est survenue: ${error.message}`);
             }
-        };
+        }, 400);
 
         const executeSacrifice = async (actionType, targetTeamId) => {
             showMessage("Le sacrifice n'est pas encore entièrement adapté à la nouvelle logique.");
         };
 
-        const switchPlayer = (team, playerIndex) => {
+        const switchPlayer = withGuard(async (team, playerIndex) => {
             const player = team.members[team.selectedPlayerIndex];
             if ((player.scores || []).length > 0 && player.roundScore === null) {
                 showMessage("Veuillez terminer le tour du joueur actuel avant de changer.");
                 return;
             }
             const gameDocRef = db.collection('games').doc(gameId);
-            db.runTransaction(async (transaction) => {
+            await db.runTransaction(async (transaction) => {
                 const docSnap = await transaction.get(gameDocRef);
                 if (!docSnap.exists) return;
                 const teams = docSnap.data().teams;
@@ -630,7 +647,7 @@
                     transaction.update(gameDocRef, { teams: teams });
                 }
             });
-        };
+        }, 300);
 
         const resetGame = async () => {
             const gameDocRef = db.collection('games').doc(gameId);
@@ -1055,93 +1072,280 @@
             document.getElementById('btn-hit').onclick = () => recordLaserShot('hit');
         };
 
-        const renderGameBoard = (board, teams) => {
-            const container = document.getElementById('game-board');
-            if (!container) return;
-            container.innerHTML = '';
+        // ---------------------------------------------------------------
+        // Plateau de jeu 3D (Three.js) avec pions 3D
+        // ---------------------------------------------------------------
+        // Le renderer/scène/caméra/contrôles sont créés UNE SEULE FOIS et
+        // réutilisés à chaque snapshot Firestore : renderPage() vide et
+        // reconstruit tout le HTML de #app à chaque mise à jour, donc si on
+        // recréait la scène 3D à chaque fois, la vue (rotation/zoom de la
+        // caméra) serait réinitialisée à chaque tir de n'importe quelle
+        // équipe, et on multiplierait les contextes WebGL. À la place, on
+        // déplace (reparente) le même <canvas> dans le conteneur #game-board
+        // courant à chaque rendu : le contexte WebGL et l'état de la caméra
+        // sont conservés.
+        let board3D = null;
 
-            const showNamesCheckbox = document.getElementById('show-names-checkbox');
-            const showNames = showNamesCheckbox ? showNamesCheckbox.checked : false;
-            const boardSize = gameData?.boardSize || 64;
+        const disposeObject3D = (obj) => {
+            obj.traverse((child) => {
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) {
+                    const materials = Array.isArray(child.material) ? child.material : [child.material];
+                    materials.forEach((m) => {
+                        if (m.map) m.map.dispose();
+                        m.dispose();
+                    });
+                }
+            });
+        };
 
-            let x = 0, y = 0;
-            let step = 40;
+        const TILE_COLORS_3D = {
+            normal: 0xf5f5f4,
+            bonus: 0x4ade80,
+            malus: 0xf87171,
+            start: 0x34d399,
+            end: 0xfbbf24,
+        };
+
+        const makeLabelSprite = (text, { fontSize = 48, color = '#1c1917', bg = 'rgba(255,255,255,0.88)' } = {}) => {
+            const canvas = document.createElement('canvas');
+            const size = 128;
+            canvas.width = size;
+            canvas.height = size;
+            const ctx2d = canvas.getContext('2d');
+            ctx2d.fillStyle = bg;
+            if (ctx2d.roundRect) {
+                ctx2d.beginPath();
+                ctx2d.roundRect(4, size * 0.3, size - 8, size * 0.4, 14);
+                ctx2d.fill();
+            } else {
+                ctx2d.fillRect(4, size * 0.3, size - 8, size * 0.4);
+            }
+            ctx2d.fillStyle = color;
+            ctx2d.font = `bold ${fontSize}px sans-serif`;
+            ctx2d.textAlign = 'center';
+            ctx2d.textBaseline = 'middle';
+            ctx2d.fillText(text, size / 2, size / 2);
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.needsUpdate = true;
+            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }));
+            return sprite;
+        };
+
+        const computeSpiralPositions3D = (boardSize) => {
+            // Même algorithme de spirale que l'ancien plateau 2D, mais sur le plan X/Z.
+            const positions = [];
+            let x = 0, z = 0;
+            const step = 1.15;
             let direction = 3;
             let stepsInCurrentDirection = 0;
-
-            let segments;
-            if (boardSize === 89) {
-                segments = [11, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
-            } else {
-                segments = [9, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
-            }
-
+            const segments = boardSize === 89
+                ? [11, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]
+                : [9, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
             let segmentIndex = 0;
             let countToChange = segments[segmentIndex];
 
-            for(let i = 0; i < boardSize; i++) {
-                const caseNumber = i + 1;
-                const squareData = board.find(s => s.number === caseNumber);
-
-                const newCase = document.createElement('div');
-                newCase.classList.add('case');
-                if(squareData) newCase.classList.add(squareData.type);
-                newCase.style.left = x + 'px';
-                newCase.style.top = y + 'px';
-                newCase.textContent = caseNumber;
-
-                if (caseNumber === 1) newCase.textContent = "Départ";
-                if (caseNumber === boardSize) newCase.textContent = "Arrivée";
-
-                container.appendChild(newCase);
-
-                // Add pawns
-                const teamsOnThisCase = teams.filter(t => t.position === caseNumber);
-                teamsOnThisCase.forEach((team, pawnIndex) => {
-                    const originalTeamIndex = teams.findIndex(t => t.id === team.id);
-                    const pawn = document.createElement('div');
-                    pawn.style.width = '12px';
-                    pawn.style.height = '12px';
-                    pawn.style.borderRadius = '50%';
-                    pawn.style.backgroundColor = teamColors[originalTeamIndex % teamColors.length];
-                    pawn.style.border = '1px solid #000';
-                    pawn.style.position = 'absolute';
-                    pawn.style.left = (2 + pawnIndex * 14) + 'px';
-                    pawn.style.top = '2px';
-                    pawn.title = team.name;
-
-                    if (team.id === userId) {
-                        pawn.classList.add('my-team-pawn');
-                    }
-
-                    if (showNames) {
-                        const nameLabel = document.createElement('div');
-                        nameLabel.className = 'pawn-name-label';
-                        nameLabel.textContent = team.name;
-                        pawn.style.position = 'relative'; // For label positioning
-                        pawn.appendChild(nameLabel);
-                    }
-
-                    newCase.appendChild(pawn);
-                });
-
-                switch(direction) {
-                    case 1: y -= step; break; // Up
-                    case 2: x += step; break; // Right
-                    case 3: y += step; break; // Down
-                    case 4: x -= step; break; // Left
+            for (let i = 0; i < boardSize; i++) {
+                positions.push({ x, z });
+                switch (direction) {
+                    case 1: z -= step; break;
+                    case 2: x += step; break;
+                    case 3: z += step; break;
+                    case 4: x -= step; break;
                 }
-
                 stepsInCurrentDirection++;
-                if(stepsInCurrentDirection === countToChange) {
+                if (stepsInCurrentDirection === countToChange) {
                     stepsInCurrentDirection = 0;
                     direction = direction === 1 ? 4 : direction - 1;
                     segmentIndex++;
-                    if (segmentIndex < segments.length) {
-                        countToChange = segments[segmentIndex];
-                    }
+                    if (segmentIndex < segments.length) countToChange = segments[segmentIndex];
                 }
             }
+
+            const xs = positions.map(p => p.x);
+            const zs = positions.map(p => p.z);
+            const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+            const cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+            positions.forEach(p => { p.x -= cx; p.z -= cz; });
+            return positions;
+        };
+
+        const createBoard3D = () => {
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xe7e5e4);
+
+            const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+            camera.position.set(0, 13, 13);
+
+            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+            renderer.domElement.className = 'board3d-canvas';
+
+            const controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.08;
+            controls.maxPolarAngle = Math.PI / 2.15;
+            controls.minDistance = 4;
+            controls.maxDistance = 60;
+            controls.target.set(0, 0, 0);
+
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x57534e, 1.1));
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.7);
+            dirLight.position.set(8, 15, 8);
+            scene.add(dirLight);
+
+            const tileGroup = new THREE.Group();
+            scene.add(tileGroup);
+            const pawnGroup = new THREE.Group();
+            scene.add(pawnGroup);
+
+            const ctx = {
+                scene, camera, renderer, controls, tileGroup, pawnGroup,
+                boardKey: null, tilePositions: null, currentContainer: null,
+            };
+
+            ctx.resize = () => {
+                const c = ctx.currentContainer;
+                if (!c) return;
+                const w = c.clientWidth || 300;
+                const h = c.clientHeight || 300;
+                camera.aspect = w / h;
+                camera.updateProjectionMatrix();
+                renderer.setSize(w, h, false);
+            };
+            ctx.resizeObserver = new ResizeObserver(() => ctx.resize());
+
+            const animate = () => {
+                requestAnimationFrame(animate);
+                controls.update();
+                renderer.render(scene, camera);
+            };
+            animate();
+
+            return ctx;
+        };
+
+        const attachBoard3D = (container) => {
+            if (!board3D) board3D = createBoard3D();
+            if (board3D.currentContainer !== container) {
+                if (board3D.currentContainer) {
+                    board3D.resizeObserver.unobserve(board3D.currentContainer);
+                }
+                container.innerHTML = '';
+                container.appendChild(board3D.renderer.domElement);
+                board3D.currentContainer = container;
+                board3D.resizeObserver.observe(container);
+                board3D.resize();
+            }
+            return board3D;
+        };
+
+        const rebuildTiles3D = (ctx, board) => {
+            disposeObject3D(ctx.tileGroup);
+            ctx.tileGroup.clear();
+
+            const positions = computeSpiralPositions3D(board.length);
+            ctx.tilePositions = positions;
+
+            const tileGeo = new THREE.BoxGeometry(1, 0.2, 1);
+            board.forEach((square, i) => {
+                const pos = positions[i];
+                const color = TILE_COLORS_3D[square.type] || TILE_COLORS_3D.normal;
+                const tile = new THREE.Mesh(tileGeo, new THREE.MeshStandardMaterial({ color, roughness: 0.75 }));
+                tile.position.set(pos.x, 0, pos.z);
+                ctx.tileGroup.add(tile);
+
+                const label = square.number === 1 ? 'Départ' : (square.number === board.length ? 'Arrivée' : String(square.number));
+                const sprite = makeLabelSprite(label, { fontSize: label.length > 3 ? 32 : 52 });
+                sprite.scale.set(0.85, 0.85, 1);
+                sprite.position.set(pos.x, 0.32, pos.z);
+                ctx.tileGroup.add(sprite);
+            });
+
+            const box = new THREE.Box3().setFromObject(ctx.tileGroup);
+            const size = new THREE.Vector3();
+            box.getSize(size);
+            const maxDim = Math.max(size.x, size.z, 4);
+            ctx.controls.target.set(0, 0, 0);
+            ctx.camera.position.set(0, maxDim * 0.85, maxDim * 0.85);
+            ctx.controls.update();
+        };
+
+        const rebuildPawns3D = (ctx, teams, boardSize, { showNames, myTeamId }) => {
+            disposeObject3D(ctx.pawnGroup);
+            ctx.pawnGroup.clear();
+            if (!ctx.tilePositions) return;
+
+            const byPosition = {};
+            teams.forEach((team, teamIndex) => {
+                const posIndex = Math.min(Math.max(team.position - 1, 0), boardSize - 1);
+                (byPosition[posIndex] = byPosition[posIndex] || []).push({ team, teamIndex });
+            });
+
+            Object.entries(byPosition).forEach(([posIndexStr, group]) => {
+                const basePos = ctx.tilePositions[parseInt(posIndexStr, 10)];
+                group.forEach((entry, pawnIndex) => {
+                    const { team, teamIndex } = entry;
+                    const color = new THREE.Color(teamColors[teamIndex % teamColors.length]);
+                    const isMine = team.id === myTeamId;
+
+                    const pawn = new THREE.Group();
+                    const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.1 });
+
+                    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, 0.5, 16), bodyMat);
+                    body.position.y = 0.35;
+                    pawn.add(body);
+
+                    const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 16), bodyMat);
+                    head.position.y = 0.68;
+                    pawn.add(head);
+
+                    if (isMine) {
+                        const ring = new THREE.Mesh(
+                            new THREE.TorusGeometry(0.28, 0.035, 8, 24),
+                            new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0x92700a, roughness: 0.3 })
+                        );
+                        ring.rotation.x = Math.PI / 2;
+                        ring.position.y = 0.08;
+                        pawn.add(ring);
+                        pawn.scale.setScalar(1.25);
+                    }
+
+                    const angle = (pawnIndex / Math.max(group.length, 1)) * Math.PI * 2;
+                    const offsetR = group.length > 1 ? 0.28 : 0;
+                    pawn.position.set(
+                        basePos.x + Math.cos(angle) * offsetR,
+                        0.1,
+                        basePos.z + Math.sin(angle) * offsetR
+                    );
+
+                    if (showNames) {
+                        const label = makeLabelSprite(team.name, { fontSize: 28 });
+                        label.scale.set(1.1, 0.55, 1);
+                        label.position.set(0, 1.05, 0);
+                        pawn.add(label);
+                    }
+
+                    ctx.pawnGroup.add(pawn);
+                });
+            });
+        };
+
+        const renderGameBoard = (board, teams) => {
+            const container = document.getElementById('game-board');
+            if (!container || typeof THREE === 'undefined') return;
+
+            const ctx = attachBoard3D(container);
+
+            const boardKey = board.length + ':' + board.map(s => s.type).join('');
+            if (ctx.boardKey !== boardKey) {
+                rebuildTiles3D(ctx, board);
+                ctx.boardKey = boardKey;
+            }
+
+            const showNamesCheckbox = document.getElementById('show-names-checkbox');
+            const showNames = showNamesCheckbox ? showNamesCheckbox.checked : false;
+            rebuildPawns3D(ctx, teams, board.length, { showNames, myTeamId: userId });
         };
 
         const generateQRCode = (gameUrl) => {
