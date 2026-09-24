@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chronomètre Laser Run</title>
+    <!-- Chargement de Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap">
+    <style>
+        :root {
+            --primary: #ef4444; /* red-500 */
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6; /* gray-100 */
+        }
+        /* Style pour les LEDs de tir */
+        .led-indicator {
+            width: 20px;
+            height: 20px;
+            background-color: #d1d5db; /* gray-300 */
+            transition: background-color 0.3s ease;
+        }
+        .led-hit {
+            background-color: #10b981; /* emerald-500 */
+        }
+        /* Animation simple pour les états */
+        .status-running { animation: pulse-running 1.5s infinite; }
+        .status-shooting { animation: pulse-shooting 1s infinite; }
+        @keyframes pulse-running {
+            0%, 100% { background-color: #93c5fd; } /* blue-300 */
+            50% { background-color: #60a5fa; } /* blue-400 */
+        }
+        @keyframes pulse-shooting {
+            0%, 100% { background-color: #fcd34d; } /* amber-300 */
+            50% { background-color: #fbbf24; } /* amber-400 */
+        }
+        /* Assure que la section principale est centrée et utilise une largeur fluide */
+        #app {
+            max-width: 90%;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        /* Ajustement pour les petits écrans où les contrôles de course peuvent se chevaucher */
+        .control-grid > * {
+            width: 100%;
+        }
+    </style>
+</head>
+<body class="p-2 md:p-8 min-h-screen flex items-start justify-center">
+
+    <div id="app" class="w-full max-w-4xl bg-white shadow-2xl rounded-xl p-4 md:p-10 border border-gray-200">
+        <h1 class="text-2xl md:text-4xl font-extrabold text-gray-800 mb-6 text-center">Chronomètre Laser Run</h1>
+        <p class="text-center mb-4"><a href="index.html" class="text-red-600 hover:underline text-sm">&larr; Retour au Jeu de l'Oie</a></p>
+
+        <!-- Section des paramètres (cachée après le démarrage) -->
+        <div id="settings-section" class="mb-6 p-3 bg-gray-50 rounded-lg shadow-inner">
+            <h2 class="text-lg md:text-xl font-bold text-gray-700 mb-3">Paramètres de la Course</h2>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                    <label for="runner-name" class="block text-xs font-medium text-gray-700">Nom du Coureur</label>
+                    <input type="text" id="runner-name" placeholder="Prénom Nom" class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm p-2 border focus:border-red-500 focus:ring-red-500 text-sm">
+                </div>
+                <div>
+                    <label for="laps-per-shooting" class="block text-xs font-medium text-gray-700">Tours entre chaque tir</label>
+                    <input type="number" id="laps-per-shooting" value="3" min="1" class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm p-2 border focus:border-red-500 focus:ring-red-500 text-sm">
+                </div>
+                <div>
+                    <label for="shooting-sessions" class="block text-xs font-medium text-gray-700">Sessions de tir (x5 tirs)</label>
+                    <input type="number" id="shooting-sessions" value="3" min="1" class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm p-2 border focus:border-red-500 focus:ring-red-500 text-sm">
+                </div>
+                <div>
+                    <label for="lap-distance" class="block text-xs font-medium text-gray-700">Distance d'un tour (m)</label>
+                    <input type="number" id="lap-distance" value="200" min="10" class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm p-2 border focus:border-red-500 focus:ring-red-500 text-sm">
+                </div>
+            </div>
+            <p class="text-xs text-gray-500 mt-2">La course commence et se termine toujours par des tours.</p>
+        </div>
+
+        <!-- Section des Chronomètres et Statut (Grille 1x3 sur LG, 2x2 ou 1x3 sur SM/MD) -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6 text-center">
+            <!-- Chrono Principal -->
+            <div class="p-3 rounded-lg bg-red-500 text-white shadow-lg col-span-1">
+                <p class="text-base font-semibold uppercase opacity-90">Temps Total de Course</p>
+                <p id="total-time-display" class="text-4xl md:text-5xl font-extrabold mt-1">00:00:00</p>
+            </div>
+            <!-- Temps de Tir Actuel -->
+            <div class="p-3 rounded-lg bg-amber-400 text-white shadow-lg col-span-1">
+                <p class="text-base font-semibold uppercase opacity-90">Tir Actuel (<span id="shooting-session-counter">0</span>/<span id="shooting-session-total">0</span>)</p>
+                <p id="current-shooting-time-display" class="text-4xl md:text-5xl font-extrabold mt-1">00:00.0</p>
+            </div>
+            <!-- Statut Actuel -->
+            <div class="p-3 rounded-lg bg-blue-400 text-white shadow-lg flex flex-col justify-center sm:col-span-2 lg:col-span-1">
+                <p class="text-base font-semibold uppercase opacity-90">Statut Actuel</p>
+                <p id="status-display" class="text-xl md:text-2xl font-extrabold mt-1">PRÊT</p>
+            </div>
+        </div>
+
+        <!-- CONTROLES DE COURSE (Visible en 'initial' ou 'running') -->
+        <div id="course-controls" class="flex flex-col space-y-3 mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 control-grid">
+                <!-- Bouton Démarrer / Lancer (Visible uniquement en état initial) -->
+                <button id="btn-start-launch" onclick="startRace()" class="p-4 rounded-xl text-white font-bold text-lg uppercase shadow-lg transition duration-200 bg-green-500 hover:bg-green-600 focus:outline-none focus:ring-4 focus:ring-green-300">
+                    Démarrer
+                </button>
+                <!-- Bouton Tour Complété / Tir -->
+                <button id="btn-shoot-transition" onclick="transitionToShooting()" disabled class="p-6 rounded-xl text-white font-bold text-xl uppercase shadow-lg transition duration-200 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 md:col-span-2">
+                    Tour Complété
+                </button>
+            </div>
+        </div>
+
+        <!-- CONTROLES DE TIR (Visible en 'shooting') -->
+        <div id="shooting-controls" class="p-4 bg-yellow-50 rounded-xl flex flex-col space-y-3 border border-yellow-200 hidden mb-6">
+            <p id="missed-shots-display" class="text-center text-sm font-medium text-gray-600">Tirs Ratés: 0</p>
+
+            <!-- Indicateurs LEDS -->
+            <div id="leds" class="flex justify-center space-x-2 mb-3">
+                <div id="led-1" class="led-indicator rounded-full shadow-inner"></div>
+                <div id="led-2" class="led-indicator rounded-full shadow-inner"></div>
+                <div id="led-3" class="led-indicator rounded-full shadow-inner"></div>
+                <div id="led-4" class="led-indicator rounded-full shadow-inner"></div>
+                <div id="led-5" class="led-indicator rounded-full shadow-inner"></div>
+            </div>
+
+            <!-- Deux Gros Boutons (Raté et Réussi) -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button id="btn-shot-missed" onclick="handleShotMissed()" disabled class="p-4 rounded-xl text-white font-bold text-lg uppercase shadow-lg transition duration-200 bg-gray-500 hover:bg-gray-600 disabled:opacity-50 focus:outline-none focus:ring-4 focus:ring-gray-300">
+                    Tir Raté
+                </button>
+                <button id="btn-shot-hit" onclick="handleShotHit()" disabled class="p-4 rounded-xl text-white font-bold text-lg uppercase shadow-lg transition duration-200 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 focus:outline-none focus:ring-4 focus:ring-yellow-400">
+                    Tir Réussi (5 tirs réussis = Repart immédiatement)
+                </button>
+            </div>
+
+            <!-- Bouton de sortie de phase (Temps Expiré) -->
+            <button id="btn-shooting-exit" onclick="finishShootingOrRace()" disabled class="w-full p-3 rounded-xl text-white font-semibold text-base uppercase shadow-md transition duration-200 bg-red-400 hover:bg-red-500 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-red-300 mt-3">
+                Temps Expiré
+            </button>
+        </div>
+
+        <!-- Section des Résultats Détaillés -->
+        <div id="results-section" class="p-4 bg-gray-700 text-white rounded-xl shadow-inner hidden">
+            <h2 class="text-xl md:text-2xl font-extrabold mb-4 text-center">Résultats pour <span id="final-runner-name"></span></h2>
+
+            <!-- Statistiques de Course (Résumé) -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-center border-b border-gray-600 pb-3 mb-4">
+                <div class="p-2 bg-gray-800 rounded-lg">
+                    <p class="text-xs font-medium opacity-75">Temps Total de Tir</p>
+                    <p id="final-shooting-time" class="text-xl font-bold">00:00.0</p>
+                </div>
+                <div class="p-2 bg-gray-800 rounded-lg">
+                    <p class="text-xs font-medium opacity-75">Vitesse Moyenne Course</p>
+                    <p id="final-avg-speed" class="text-xl font-bold">0.0 m/s</p>
+                </div>
+                <div class="p-2 bg-gray-800 rounded-lg">
+                    <p class="text-xs font-medium opacity-75">Moyenne au Tour</p>
+                    <p id="final-avg-lap-time" class="text-xl font-bold">00:00.0</p>
+                </div>
+            </div>
+
+            <!-- Détails des Tours -->
+            <h3 class="text-lg font-bold mb-3 mt-4 text-red-400">Détails des Tours (<span id="total-laps-count">0</span> Tours)</h3>
+            <div id="lap-details-container" class="space-y-2 text-sm bg-gray-800 p-3 rounded-lg max-h-40 overflow-y-auto">
+                <!-- Les détails des tours seront insérés ici -->
+                <p class="text-center opacity-50">Aucun tour enregistré.</p>
+            </div>
+
+            <!-- Détails des Tirs -->
+            <h3 class="text-lg font-bold mb-3 mt-4 text-amber-400">Détails des Tirs (<span id="total-sessions-count">0</span> Sessions)</h3>
+            <div id="shooting-details-container" class="space-y-2 text-sm bg-gray-800 p-3 rounded-lg max-h-40 overflow-y-auto">
+                <!-- Les détails des tirs seront insérés ici -->
+                <p class="text-center opacity-50">Aucune session de tir enregistrée.</p>
+            </div>
+
+            <!-- Statistiques de tirs globales -->
+            <p id="final-shooting-summary" class="text-base text-center mt-4 pt-3 border-t border-gray-600">Total Tirs Ratés : 0. Taux de réussite global : 0%</p>
+
+            <!-- QR Code Section -->
+            <div class="flex justify-center my-4">
+                <div id="qrcode" class="p-2 bg-white border-4 border-white rounded-lg shadow-md"></div>
+            </div>
+
+            <!-- Bouton Autre Course -->
+            <div class="mt-6 text-center">
+                <button id="btn-another-race" onclick="setupAnotherRace()" class="p-3 rounded-xl text-white font-bold text-base uppercase shadow-lg transition duration-200 bg-green-500 hover:bg-green-600">
+                    Nouvelle Course
+                </button>
+            </div>
+        </div>
+
+        <!-- Section du Bouton Réinitialiser (Tout en bas) -->
+        <div class="mt-6 pt-3 border-t border-gray-300">
+            <button id="btn-reset-only" onclick="resetRaceConfirmation()" disabled class="w-full p-3 rounded-xl text-white font-bold text-lg uppercase shadow-lg transition duration-200 bg-gray-500 hover:bg-gray-600 disabled:opacity-50">
+                Réinitialiser la Course
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // Constantes
+        const MS_IN_SECOND = 1000;
+        const TARGET_HITS = 5;
+
+        // Variables d'état
+        let state = 'initial'; // 'initial', 'running', 'shooting', 'finished'
+        let runnerName = '';
+        let lapCountPerShooting = 0;
+        let shootingSessionsTotal = 0;
+        let lapDistanceM = 0;
+
+        // Variables de chronométrage
+        let totalElapsedTime = 0; // Temps total écoulé (ms)
+        let totalShootingTime = 0; // Temps total passé aux tirs (ms)
+        let currentShootingStartTime = 0; // Timestamp du début de la session de tir actuelle
+        let currentShootingTime = 0; // Temps de la session de tir actuelle (ms)
+        let lastTimestamp = 0; // Pour le calcul du delta temps précis
+        let mainInterval = null; // ID du setInterval
+
+        // Variables de progression
+        let shootingSessionsCompleted = 0;
+        let shotsHit = 0;
+        let shotsMissed = 0;
+        let lapsCompleted = 0;
+
+        // Statistiques détaillées
+        let lapTimes = []; // [time_lap1, time_lap2, ...] (ms)
+        let lastLapTimestamp = 0; // Timestamp du dernier départ/début de course/fin de tir
+        let shootingStats = []; // [{ time: ms, hits: int, misses: int, attempts: int, successRate: % }]
+
+        // --- Éléments du DOM ---
+        const $ = (id) => document.getElementById(id);
+        const elements = {
+            // Affichage
+            totalTimeDisplay: $('total-time-display'),
+            currentShootingTimeDisplay: $('current-shooting-time-display'),
+            statusDisplay: $('status-display'),
+            shootingSessionCounter: $('shooting-session-counter'),
+            shootingSessionTotal: $('shooting-session-total'),
+            missedShotsDisplay: $('missed-shots-display'),
+            // Paramètres
+            runnerNameInput: $('runner-name'),
+            lapsInput: $('laps-per-shooting'),
+            sessionsInput: $('shooting-sessions'),
+            distanceInput: $('lap-distance'),
+            settingsSection: $('settings-section'),
+            // Boutons
+            btnStartLaunch: $('btn-start-launch'), // Renommé pour Démarrer/Lancer
+            btnResetOnly: $('btn-reset-only'), // Nouveau bouton de réinitialisation
+            btnShootTransition: $('btn-shoot-transition'),
+            btnShotMissed: $('btn-shot-missed'),
+            btnShotHit: $('btn-shot-hit'),
+            btnShootingExit: $('btn-shooting-exit'),
+            // Sections de contrôle
+            courseControls: $('course-controls'),
+            shootingControls: $('shooting-controls'),
+            // LEDs
+            leds: [$('led-1'), $('led-2'), $('led-3'), $('led-4'), $('led-5')],
+            // Résultats
+            resultsSection: $('results-section'),
+            finalRunnerName: $('final-runner-name'),
+            finalShootingTime: $('final-shooting-time'),
+            finalAvgSpeed: $('final-avg-speed'),
+            finalAvgLapTime: $('final-avg-lap-time'),
+            lapDetailsContainer: $('lap-details-container'),
+            shootingDetailsContainer: $('shooting-details-container'),
+            totalLapsCount: $('total-laps-count'),
+            totalSessionsCount: $('total-sessions-count'),
+            finalShootingSummary: $('final-shooting-summary'),
+        };
+
+        // --- Fonctions utilitaires ---
+
+        /**
+         * Formate un temps en millisecondes en HH:MM:SS.centiemes
+         * @param {number} ms - Temps en millisecondes
+         * @param {boolean} showCenti - Afficher les centièmes (pour le tir ou les tours)
+         * @returns {string} Temps formaté
+         */
+        function formatTime(ms, showCenti = false) {
+            const totalSeconds = Math.floor(ms / MS_IN_SECOND);
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            const msRemaining = Math.floor(ms % MS_IN_SECOND);
+
+            const pad = (n) => String(n).padStart(2, '0');
+
+            if (showCenti) {
+                // Montrer minutes:secondes.dixièmes (le d' est la centième partie)
+                return `${pad(minutes)}:${pad(seconds)}.${String(msRemaining).padStart(3, '0').slice(0, 1)}`;
+            }
+            return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+        }
+
+        /**
+         * Gère l'affichage et l'état des boutons.
+         */
+        function updateUIState() {
+            const isInitial = state === 'initial';
+            const isRunning = state === 'running';
+            const isShooting = state === 'shooting';
+
+            // --- Gestion des sections de contrôles (Course vs Tir) ---
+
+            // Le contrôle de course est visible en mode 'initial' ou 'running'
+            elements.courseControls.classList.toggle('hidden', isShooting || state === 'finished');
+            // Le contrôle de tir est visible uniquement en mode 'shooting'
+            elements.shootingControls.classList.toggle('hidden', !isShooting);
+
+            // Masquer/Afficher le bouton Démarrer
+            elements.btnStartLaunch.style.display = isInitial ? 'block' : 'none';
+
+            // Ajuster la largeur du bouton Tour Complété dans la grille de course
+            const controlGrid = elements.btnStartLaunch.parentNode;
+            if (controlGrid) {
+                // Si Démarrer est visible (état initial), Tour Complété prend 1 colonne (md:col-span-1 est implicite)
+                elements.btnShootTransition.classList.toggle('md:col-span-2', !isInitial);
+            }
+
+            // Mise à jour du bouton de Réinitialisation
+            elements.btnResetOnly.disabled = isInitial;
+
+            // Contrôles de course
+            elements.btnShootTransition.disabled = !isRunning;
+
+            // Mise à jour du texte du bouton de transition en mode course
+            if (isRunning) {
+                 if (lapsCompleted >= lapCountPerShooting) {
+                    elements.btnShootTransition.textContent = `ALLER AU TIR ! (Tour ${lapCountPerShooting}/${lapCountPerShooting} Complété)`;
+                 } else {
+                    elements.btnShootTransition.textContent = `Tour Complété`;
+                 }
+            } else {
+                 elements.btnShootTransition.textContent = `Tour Complété`;
+            }
+
+            // Contrôles de tir
+
+            elements.btnShotMissed.disabled = !isShooting;
+            elements.btnShotHit.disabled = !isShooting || shotsHit >= TARGET_HITS;
+
+            // Le bouton de sortie (Temps Expiré) est actif uniquement en phase de tir manuelle.
+            elements.btnShootingExit.textContent = 'Temps Expiré';
+            elements.btnShootingExit.disabled = !isShooting;
+            elements.btnShootingExit.classList.remove('bg-emerald-500', 'hover:bg-emerald-600');
+            elements.btnShootingExit.classList.add('bg-red-400', 'hover:bg-red-500');
+
+            // Affichage du statut
+            elements.statusDisplay.textContent = {
+                'initial': 'PRÊT',
+                'running': `COURSE (Tours complétés: ${lapsCompleted}/${lapCountPerShooting}) avant Tir n°${shootingSessionsCompleted + 1}`,
+                'shooting': `TIR (${shotsHit}/${TARGET_HITS})`,
+                'finished': 'TERMINÉ',
+            }[state];
+            elements.statusDisplay.className = `text-xl md:text-2xl font-extrabold mt-1 transition duration-500 ${
+                isRunning ? 'status-running bg-blue-400' :
+                isShooting ? 'status-shooting bg-amber-400' :
+                state === 'finished' ? 'bg-green-500' :
+                'bg-gray-400'
+            } p-3 rounded-lg text-white shadow-lg flex flex-col justify-center`; // Pading ajusté ici
+
+            // Affichage des sessions de tir
+            elements.shootingSessionCounter.textContent = shootingSessionsCompleted;
+            elements.shootingSessionTotal.textContent = shootingSessionsTotal;
+
+            // Affichage des tirs ratés
+            elements.missedShotsDisplay.textContent = `Tirs Ratés: ${shotsMissed}`;
+        }
+
+        /**
+         * Met à jour les chronomètres sur l'interface.
+         */
+        function updateChronometers() {
+            const now = performance.now();
+            if (lastTimestamp === 0) {
+                lastTimestamp = now;
+            }
+            const deltaTime = now - lastTimestamp;
+            lastTimestamp = now;
+
+            if (state === 'running') {
+                totalElapsedTime += deltaTime;
+            } else if (state === 'shooting') {
+                const elapsedSinceStart = now - currentShootingStartTime;
+                currentShootingTime = elapsedSinceStart;
+                elements.currentShootingTimeDisplay.textContent = formatTime(currentShootingTime, true);
+            }
+
+            elements.totalTimeDisplay.textContent = formatTime(totalElapsedTime);
+        }
+
+        /**
+         * Met à jour les LEDs.
+         */
+        function updateLEDs() {
+            elements.leds.forEach((led, index) => {
+                led.classList.toggle('led-hit', index < shotsHit);
+            });
+        }
+
+        // --- Logique de la course ---
+
+        /**
+         * Prépare une nouvelle course en réinitialisant l'état.
+         */
+        function setupAnotherRace() {
+            resetRace();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        /**
+         * Demande confirmation pour la réinitialisation de la course.
+         */
+        function resetRaceConfirmation() {
+             if (state === 'initial') return; // Rien à réinitialiser
+
+             // Utilisation de window.confirm()
+             const confirmation = confirm("Êtes-vous sûr de vouloir réinitialiser la course ? Toutes les données de temps et de tours seront perdues.");
+
+             if (confirmation) {
+                 resetRace();
+             }
+        }
+
+        /**
+         * Réinitialise toutes les variables et l'interface.
+         */
+        function resetRace() {
+            if (mainInterval) clearInterval(mainInterval);
+            state = 'initial';
+            totalElapsedTime = 0;
+            totalShootingTime = 0;
+            currentShootingTime = 0;
+            shootingSessionsCompleted = 0;
+            shotsHit = 0;
+            shotsMissed = 0;
+            lapsCompleted = 0;
+            lapTimes = []; // Réinitialisation
+            shootingStats = []; // Réinitialisation
+            lastTimestamp = 0;
+            lastLapTimestamp = 0; // Réinitialisation
+            elements.resultsSection.classList.add('hidden');
+
+            elements.settingsSection.classList.remove('hidden');
+
+            updateLEDs();
+            updateUIState();
+            elements.totalTimeDisplay.textContent = '00:00:00';
+            elements.currentShootingTimeDisplay.textContent = '00:00.0';
+            console.log("Course réinitialisée.");
+        }
+
+
+        /**
+         * Initialise la course.
+         */
+        function startRace() {
+            if (state !== 'initial') return; // Ne permet de démarrer que depuis l'état initial
+
+            // Récupération des paramètres
+            runnerName = elements.runnerNameInput.value || 'Anonyme';
+            lapCountPerShooting = parseInt(elements.lapsInput.value) || 1;
+            shootingSessionsTotal = parseInt(elements.sessionsInput.value) || 1;
+            lapDistanceM = parseInt(elements.distanceInput.value) || 200;
+
+            if (lapCountPerShooting < 1 || shootingSessionsTotal < 1 || lapDistanceM < 10) {
+                 console.error("Veuillez entrer des valeurs valides (minimum 1 tour, 1 session, 10m par tour).");
+                return;
+            }
+
+            elements.settingsSection.classList.add('hidden');
+
+            // Début de la course
+            console.log(`Démarrage : ${lapCountPerShooting} tours / ${shootingSessionsTotal} sessions.`);
+            state = 'running';
+            lapsCompleted = 0;
+            lastTimestamp = performance.now();
+            lastLapTimestamp = lastTimestamp; // Début du premier tour
+            mainInterval = setInterval(updateChronometers, 50);
+            updateUIState();
+            elements.resultsSection.classList.add('hidden');
+        }
+
+        /**
+         * Compte un tour ou, si tous les tours sont complétés, transitionne vers la phase de tir.
+         */
+        function transitionToShooting() {
+            if (state !== 'running') return;
+
+            const now = performance.now();
+            const lapDuration = now - lastLapTimestamp;
+
+            lapsCompleted++;
+
+            // 1. Vérifier si tous les tours requis sont complétés
+            if (lapsCompleted < lapCountPerShooting) {
+                // ENREGISTRER LE TEMPS DU TOUR
+                lapTimes.push(lapDuration);
+                lastLapTimestamp = now; // Le début du prochain tour est maintenant
+
+                console.log(`Tour complété. Tours: ${lapsCompleted}/${lapCountPerShooting}. Durée: ${formatTime(lapDuration, true)}`);
+                updateUIState();
+                return;
+            }
+
+            // Le dernier tour est complété, ENREGISTRER LE TEMPS
+            lapTimes.push(lapDuration);
+            // lastLapTimestamp n'est pas mis à jour ici car on passe au tir.
+
+            // Vérifier si c'est la fin de la course (le dernier segment de course est toujours après le dernier tir)
+            if (shootingSessionsCompleted >= shootingSessionsTotal) {
+                finishRace();
+                return;
+            }
+
+            // Transition vers la phase de tir
+            console.log(`Début de la session de tir n°${shootingSessionsCompleted + 1}.`);
+            state = 'shooting';
+            shotsHit = 0;
+            currentShootingStartTime = performance.now();
+            updateLEDs();
+            updateUIState();
+        }
+
+        /**
+         * Enregistre un tir raté.
+         */
+        function handleShotMissed() {
+             if (state !== 'shooting') return;
+
+             shotsMissed++;
+             console.log(`Tir raté. Total raté : ${shotsMissed}`);
+             updateUIState();
+        }
+
+        /**
+         * Enregistre un tir réussi.
+         */
+        function handleShotHit() {
+            if (state !== 'shooting' || shotsHit >= TARGET_HITS) return;
+
+            shotsHit++;
+            console.log(`Tir réussi : ${shotsHit}/${TARGET_HITS}`);
+            updateLEDs();
+
+            // Transition automatique dès que 5 tirs sont réussis
+            if (shotsHit === TARGET_HITS) {
+                console.log("5 tirs réussis. Transition automatique vers la course.");
+                finishShootingOrRace();
+                return;
+            }
+
+            updateUIState();
+        }
+
+        /**
+         * Termine la session de tir et repart pour la course, ou termine la course.
+         * Appelé par le bouton 'Temps Expiré' ou automatiquement après 5 hits.
+         */
+        function finishShootingOrRace() {
+            if (state !== 'shooting') return;
+
+            // 1. Enregistrer le temps de tir et les stats
+            const shootingDuration = performance.now() - currentShootingStartTime;
+
+            const attempts = shotsHit + shotsMissed;
+            const successRate = attempts > 0 ? (shotsHit / attempts) * 100 : 0;
+
+            shootingStats.push({
+                session: shootingSessionsCompleted + 1,
+                time: shootingDuration,
+                hits: shotsHit,
+                misses: shotsMissed,
+                attempts: attempts,
+                successRate: successRate,
+            });
+
+            totalShootingTime += shootingDuration;
+            totalElapsedTime += shootingDuration;
+            shootingSessionsCompleted++;
+
+            currentShootingTime = 0;
+            elements.currentShootingTimeDisplay.textContent = '00:00.0';
+
+            shotsHit = 0;
+            shotsMissed = 0;
+
+            // 2. Repartir pour la course (la vérification de fin se fait dans transitionToShooting)
+            console.log(`Session de tir n°${shootingSessionsCompleted} terminée. Reprise de la course.`);
+            state = 'running';
+            lapsCompleted = 0;
+            lastLapTimestamp = performance.now(); // Démarrer le chronomètre du premier tour de la nouvelle boucle
+            lastTimestamp = performance.now();
+            updateLEDs();
+            updateUIState();
+        }
+
+        /**
+         * Termine définitivement la course et affiche les résultats.
+         */
+        function finishRace() {
+            if (mainInterval) clearInterval(mainInterval);
+            state = 'finished';
+
+            updateChronometers();
+
+            calculateMetrics();
+            elements.resultsSection.classList.remove('hidden');
+            updateUIState();
+
+            console.log("COURSE TERMINÉE.");
+        }
+
+        /**
+         * Calcule et affiche les métriques finales.
+         */
+        function calculateMetrics() {
+            elements.finalRunnerName.textContent = runnerName;
+
+            // --- Calculs pour les tours ---
+            const totalLapTime = lapTimes.reduce((sum, time) => sum + time, 0);
+            const avgLapTime = lapTimes.length > 0 ? totalLapTime / lapTimes.length : 0;
+            const totalLapsCount = lapTimes.length;
+
+            // --- Calculs pour les tirs ---
+            const totalShootingTimeCalculated = shootingStats.reduce((sum, stat) => sum + stat.time, 0);
+            const avgShootingTime = shootingStats.length > 0 ? totalShootingTimeCalculated / shootingStats.length : 0;
+            const totalAttempts = shootingStats.reduce((sum, stat) => sum + stat.attempts, 0);
+            const totalHits = shootingStats.reduce((sum, stat) => sum + stat.hits, 0);
+            const totalMisses = shootingStats.reduce((sum, stat) => sum + stat.misses, 0);
+
+            // --- Calculs généraux ---
+            const totalRunningTime = totalElapsedTime - totalShootingTime;
+            const totalRunningDistanceM = totalLapsCount * lapDistanceM;
+
+            let avgSpeedMs = 0;
+            if (totalRunningTime > 0) {
+                avgSpeedMs = totalRunningDistanceM / (totalRunningTime / MS_IN_SECOND);
+            }
+
+            // --- Affichage des métriques principales ---
+            elements.finalShootingTime.textContent = formatTime(totalShootingTime, true);
+            elements.finalAvgSpeed.textContent = `${avgSpeedMs.toFixed(2)} m/s`;
+            elements.finalAvgLapTime.textContent = formatTime(avgLapTime, true);
+
+            const globalSuccessRate = totalAttempts > 0 ? (totalHits / totalAttempts * 100).toFixed(1) : 0;
+            elements.finalShootingSummary.textContent = `Total Tirs Ratés : ${totalMisses}. Taux de réussite global : ${globalSuccessRate}%`;
+
+            // --- Affichage des détails par tour ---
+            elements.totalLapsCount.textContent = totalLapsCount;
+            elements.lapDetailsContainer.innerHTML = lapTimes.length > 0 ? lapTimes.map((time, index) => `
+                <div class="flex justify-between p-2 bg-gray-900 rounded-md">
+                    <span class="font-semibold text-red-300">Tour ${index + 1}</span>
+                    <span>${formatTime(time, true)}</span>
+                </div>
+            `).join('') : '<p class="text-center opacity-50">Aucun tour enregistré.</p>';
+
+            // --- Affichage des détails par tir ---
+            elements.totalSessionsCount.textContent = shootingStats.length;
+            elements.shootingDetailsContainer.innerHTML = shootingStats.length > 0 ? shootingStats.map(stat => `
+                <div class="p-2 bg-gray-900 rounded-md">
+                    <p class="font-semibold text-amber-300 mb-1">Session de Tir n°${stat.session}</p>
+                    <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                        <span class="opacity-75">Temps passé :</span>
+                        <span class="font-bold">${formatTime(stat.time, true)}</span>
+                        <span class="opacity-75">Tirs réussis/tentatives :</span>
+                        <span class="font-bold">${stat.hits}/${stat.attempts}</span>
+                        <span class="opacity-75">Taux de réussite :</span>
+                        <span class="font-bold text-green-400">${stat.successRate.toFixed(1)}%</span>
+                    </div>
+                </div>
+            `).join('') : '<p class="text-center opacity-50">Aucune session de tir enregistrée.</p>';
+
+            // --- Génération du QR Code ---
+            generateQRCode({
+                nom: runnerName,
+                tempsTotal: formatTime(totalElapsedTime),
+                tempsTir: formatTime(totalShootingTime, true),
+                efficacite: `${globalSuccessRate}%`
+            });
+        }
+
+        /**
+         * Génère un QR code avec les statistiques finales.
+         * @param {object} stats - Les statistiques à encoder.
+         */
+        function generateQRCode(stats) {
+            const el = $('qrcode');
+            if (!el) return;
+            el.innerHTML = ""; // Vider le QR code précédent
+            const text = JSON.stringify(stats);
+            new QRCode(el, {
+                text: text,
+                width: 192,
+                height: 192,
+                correctLevel: QRCode.CorrectLevel.M
+            });
+        }
+
+
+        // Initialisation au chargement de la page
+        document.addEventListener('DOMContentLoaded', () => {
+            updateUIState();
+            updateLEDs();
+        });
+
+    </script>
+</body>
+</html>

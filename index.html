@@ -1,0 +1,1161 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jeu de l'Oie Laser Run</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase (authentification anonyme, base de données) -->
+    <script src="https://www.gstatic.com/firebasejs/10.6.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.6.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.6.0/firebase-firestore-compat.js"></script>
+    <!-- Génération de QR codes -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        .case {
+            position: absolute;
+            width: 35px;
+            height: 35px;
+            border: 1px solid black;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+        }
+        .bonus { background-color: #4ade80; }
+        .malus { background-color: #f87171; }
+        .start { background-color: #34d399; }
+        .end { background-color: #fbbf24; }
+        .my-team-pawn {
+            transform: scale(1.5);
+            z-index: 10;
+            border: 2px solid gold !important;
+        }
+        .pawn-name-label {
+            position: absolute;
+            bottom: 120%;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 0, 0, 0.75);
+            color: white;
+            padding: 2px 5px;
+            border-radius: 4px;
+            font-size: 10px;
+            white-space: nowrap;
+        }
+        .led-indicator {
+            width: 20px;
+            height: 20px;
+            background-color: #d1d5db; /* gray-300 */
+            border-radius: 50%;
+            transition: background-color 0.3s ease;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .led-hit {
+            background-color: #10b981; /* emerald-500 */
+        }
+        .led-miss {
+            background-color: #ef4444; /* red-500 */
+        }
+        .led-sacrifice {
+            background-color: #f59e0b; /* amber-500 */
+        }
+        .led-penalty {
+            background-color: #8b5cf6; /* violet-500 */
+        }
+    </style>
+</head>
+<body class="bg-stone-100 text-stone-900">
+
+    <div id="timer-container" class="text-2xl font-bold text-center p-4"></div>
+    <div style="margin: 12px; padding: 10px 12px; border: 1px dashed #b45309; background: #fff7ed; border-radius: 8px; max-width: 860px;">
+        Cette application utilise Firebase (authentification anonyme, base de données) pour synchroniser les équipes en
+        temps réel, ainsi qu'un service de génération de QR codes. Les noms d'équipe et scores sont stockés dans
+        Firebase tant que la partie reste active.
+    </div>
+    <div id="app" class="min-h-screen flex flex-col items-center justify-center p-4">
+        <!-- Le contenu de l'application sera injecté ici par JavaScript -->
+    </div>
+
+    <!-- Modale générique pour les messages -->
+    <div id="message-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 hidden">
+        <div class="bg-stone-100 p-6 rounded-xl shadow-lg text-center max-w-sm w-full">
+            <p id="message-text" class="text-xl mb-4 text-stone-800 whitespace-pre-line"></p>
+            <button id="message-close-btn" class="bg-stone-700 hover:bg-stone-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-colors">OK</button>
+        </div>
+    </div>
+
+    <!-- Modale pour sacrifier un tir -->
+    <div id="sacrifice-arrow-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 hidden">
+        <div class="bg-stone-100 p-6 rounded-xl shadow-lg text-left max-w-md w-full">
+
+            <!-- Step 1: Choose Penalty -->
+            <div id="sacrifice-step-1">
+                <h3 class="text-2xl font-bold mb-4 text-stone-800">Sacrifier un tir</h3>
+                <p class="mb-6 text-stone-700">Choisissez un désavantage à appliquer à une autre équipe. Cela vous coûtera un ou deux tirs.</p>
+                <div class="space-y-3">
+                    <button data-action="move_backward" class="sacrifice-action-btn w-full text-left p-4 rounded-lg bg-stone-200 hover:bg-amber-200 transition-colors">
+                        <span class="font-bold">Faire reculer de 10 cases (coût : 2 tirs)</span>
+                        <span class="block text-sm text-stone-600">L'équipe ciblée reculera immédiatement de 10 cases.</span>
+                    </button>
+                    <button data-action="lose_arrow" class="sacrifice-action-btn w-full text-left p-4 rounded-lg bg-stone-200 hover:bg-amber-200 transition-colors">
+                        <span class="font-bold">Faire perdre un tir (coût : 1 tir)</span>
+                        <span class="block text-sm text-stone-600">Un joueur de l'équipe ciblée perdra un tir au prochain tour.</span>
+                    </button>
+                </div>
+                <div class="flex justify-end mt-6">
+                    <button id="sacrifice-arrow-cancel" class="bg-stone-500 hover:bg-stone-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">Annuler</button>
+                </div>
+            </div>
+
+            <!-- Step 2: Choose Target Team -->
+            <div id="sacrifice-step-2" class="hidden">
+                <h3 class="text-2xl font-bold mb-4 text-stone-800">Qui cibler ?</h3>
+                <div id="sacrifice-target-buttons" class="grid grid-cols-2 gap-3 mb-6">
+                    <!-- Target team buttons will be injected here -->
+                </div>
+                <div class="flex justify-end">
+                    <button id="sacrifice-back-btn" class="bg-stone-500 hover:bg-stone-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">Retour</button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Modale pour le tutoriel -->
+    <div id="tutorial-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 hidden">
+        <div class="bg-stone-100 p-6 rounded-xl shadow-lg text-left max-w-2xl w-full overflow-y-auto max-h-full">
+            <div class="flex justify-between items-center mb-4 border-b pb-2 border-stone-300">
+                <h3 class="text-2xl font-bold text-amber-700">📜 Tutoriel du Jeu</h3>
+                <button id="tutorial-close-btn" class="text-3xl font-bold text-stone-500 hover:text-stone-800">&times;</button>
+            </div>
+
+            <div class="space-y-6 text-stone-800">
+                <div>
+                    <h4 class="font-bold text-lg flex items-center"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 mr-2 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>Mise en Place (Professeur)</h4>
+                    <p class="mt-1 pl-8">Le professeur choisit d'abord la <strong>taille du plateau</strong> (Normal ou Grand) avant de cliquer sur "Créer une nouvelle partie".</p>
+                    <p class="mt-2 pl-8">Ensuite, les équipes se connectent en <strong>scannant le QR code</strong> affiché. Le professeur peut <strong>supprimer une équipe</strong> si nécessaire.</p>
+                    <p class="mt-2 pl-8">Le professeur peut également choisir le <strong>nombre d'équipes qui doivent arriver</strong> pour que la partie se termine.</p>
+                    <p class="mt-2 pl-8">Une fois que toutes les équipes sont connectées, le professeur peut cliquer sur <strong>"Démarrer la partie"</strong>.</p>
+                </div>
+
+                <div>
+                    <h4 class="font-bold text-lg flex items-center"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 mr-2 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>Le But du Jeu</h4>
+                    <p class="mt-1 pl-8">Être la première équipe à atteindre ou dépasser la dernière case du plateau !</p>
+                </div>
+
+                <div>
+                    <h4 class="font-bold text-lg flex items-center"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 mr-2 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>Déroulement d'un tour</h4>
+                    <p class="mt-1 pl-8">Chaque équipe est composée de <strong>2 joueurs</strong>. À chaque tour, les deux joueurs doivent effectuer leurs <strong>5 tirs</strong>.</p>
+                    <p class="mt-2 pl-8">Pour avancer, on <strong>additionne le nombre de tirs réussis (lumières vertes)</strong> de chaque joueur. <br><em>Exemple: Joueur 1 réussit 3 tirs. Joueur 2 réussit 4 tirs. L'équipe avance de 7 cases.</em></p>
+                </div>
+
+                <div>
+                    <h4 class="font-bold text-lg flex items-center"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 mr-2 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>Cases Spéciales</h4>
+                    <p class="mt-1 pl-8">Le plateau contient des cases bonus et malus qui modifient votre progression :</p>
+                    <p class="mt-2 pl-8 font-semibold">Plateau Normal (64 cases) :</p>
+                    <ul class="list-disc list-inside mt-1 space-y-1 pl-12">
+                        <li><span class="font-bold text-green-600">Bonus (13, 21, 46):</span> Avancez plus vite !</li>
+                        <li><span class="font-bold text-red-600">Malus (6, 30, 50):</span> Oups, vous reculez !</li>
+                    </ul>
+                    <p class="mt-2 pl-8 font-semibold">Plateau Grand (89 cases) :</p>
+                    <ul class="list-disc list-inside mt-1 space-y-1 pl-12">
+                        <li><span class="font-bold text-green-600">Bonus (18, 29, 51, 64):</span> Avancez plus vite !</li>
+                        <li><span class="font-bold text-red-600">Malus (8, 42, 58, 70):</span> Oups, vous reculez !</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        // Configuration de l'application
+        const APP_ID = 'default-app-id';
+        const HITS_TO_WIN_TURN = 5;
+        const firebaseConfig = {
+            apiKey: "AIzaSyCcQPQNXxN4wlfGOShpHlNek_y8KyVafuM",
+            authDomain: "jeudeloie-81180.firebaseapp.com",
+            projectId: "jeudeloie-81180",
+            storageBucket: "jeudeloie-81180.firebasestorage.app",
+            messagingSenderId: "965576915750",
+            appId: "1:965576915750:web:2e9b54c064d18ac4981fe7",
+            measurementId: "G-T4BMCTTEXN"
+        };
+
+        // État de l'application
+        let app = null;
+        let db = null;
+        let auth = null;
+        let userId = null;
+        let gameId = null;
+        let gameData = null;
+        let currentPage = 'home';
+        let unsubscribeFromGame = null;
+        const teamColors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf", "#aec7e8", "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5", "#c49c94", "#f7b6d2", "#c7c7c7", "#dbdb8d", "#9edae5"];
+
+        const appDiv = document.getElementById('app');
+
+        // Fonctions utilitaires
+        const generateRandomId = () => Math.random().toString(36).substring(2, 9);
+        const hexToRgba = (hex, alpha = 1) => {
+            if (!/^#([A-Fa-f0-9]{3}){1,2}$/.test(hex)) return '';
+            let c = hex.substring(1).split('');
+            if (c.length === 3) {
+                c = [c[0], c[0], c[1], c[1], c[2], c[2]];
+            }
+            c = '0x' + c.join('');
+            return `rgba(${(c>>16)&255},${(c>>8)&255},${c&255},${alpha})`;
+        };
+
+        const formatTime = (seconds) => {
+            if (seconds < 60) {
+                return `${seconds}s`;
+            }
+            const minutes = Math.floor(seconds / 60);
+            const remainingSeconds = seconds % 60;
+            return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+        };
+        const setPage = (pageName) => {
+            currentPage = pageName;
+            renderPage();
+        };
+
+        let timerInterval = null;
+
+        const updateTimer = () => {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+            }
+
+            if (gameData && gameData.startTime && gameData.status === 'playing') {
+                const timerDiv = document.getElementById('timer-container');
+                if (!timerDiv) return;
+
+                timerInterval = setInterval(() => {
+                    if (!gameData.startTime) return;
+                    const now = new Date().getTime();
+                    const startTime = gameData.startTime.toMillis();
+                    const elapsed = now - startTime;
+
+                    const hours = Math.floor(elapsed / (1000 * 60 * 60));
+                    const minutes = Math.floor((elapsed % (1000 * 60 * 60)) / (1000 * 60));
+                    const seconds = Math.floor((elapsed % (1000 * 60)) / 1000);
+
+                    timerDiv.innerHTML = `Temps écoulé: ${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                }, 1000);
+            } else {
+                const timerDiv = document.getElementById('timer-container');
+                if (timerDiv) {
+                    timerDiv.innerHTML = '';
+                }
+            }
+        };
+
+        const showMessage = (message) => {
+            document.getElementById('message-text').innerText = message;
+            document.getElementById('message-modal').classList.remove('hidden');
+        };
+
+        document.getElementById('message-close-btn').onclick = () => {
+            document.getElementById('message-modal').classList.add('hidden');
+        };
+
+        // Logique Firebase
+        window.onload = async () => {
+            app = firebase.initializeApp(firebaseConfig);
+            db = firebase.firestore();
+            auth = firebase.auth();
+
+            document.getElementById('tutorial-close-btn').onclick = () => {
+                document.getElementById('tutorial-modal').classList.add('hidden');
+            };
+
+            auth.signInAnonymously().then(() => {
+                auth.onAuthStateChanged(user => {
+                    if (user) {
+                        userId = user.uid;
+                        handleUrlHash();
+                        if (!gameId) {
+                            renderPage();
+                        }
+                    }
+                });
+            }).catch(error => {
+                console.error("Erreur de connexion anonyme:", error);
+                showMessage("Erreur de connexion, impossible de charger l'application.\n\nVérifiez que l'authentification anonyme est activée dans la console Firebase du projet.");
+            });
+        };
+
+        const handleUrlHash = () => {
+            const hash = window.location.hash;
+            if (hash.startsWith('#game_id=')) {
+                gameId = hash.split('=')[1];
+                listenToGameData();
+            } else {
+                setPage('home');
+            }
+        };
+
+        window.addEventListener('hashchange', handleUrlHash);
+
+        const listenToGameData = () => {
+            if (unsubscribeFromGame) {
+                unsubscribeFromGame();
+            }
+            const gameDocRef = db.collection('games').doc(gameId);
+            unsubscribeFromGame = gameDocRef.onSnapshot(doc => {
+                if (doc.exists) {
+                    gameData = doc.data();
+                    updateTimer();
+
+                    const myTeam = gameData.teams.find(t => t.id === userId);
+                    if (myTeam && myTeam.penaltyMessage) {
+                        showMessage(myTeam.penaltyMessage);
+                        const gameDocRef = db.collection('games').doc(gameId);
+                        db.runTransaction(async (transaction) => {
+                            const docSnap = await transaction.get(gameDocRef);
+                            if (!docSnap.exists) return;
+                            const currentTeams = docSnap.data().teams;
+                            const updatedTeams = currentTeams.map(t => {
+                                if (t.id === myTeam.id) {
+                                    return { ...t, penaltyMessage: null };
+                                }
+                                return t;
+                            });
+                            transaction.update(gameDocRef, { teams: updatedTeams });
+                        });
+                    }
+
+                    if (gameData.teacherId === userId) {
+                         if (gameData.status === 'playing') {
+                            setPage('teacherGame');
+                        } else {
+                            setPage('teacherSetup');
+                        }
+                    } else if (gameData.teams.some(t => t.id === userId)) {
+                         setPage('studentGame');
+                    } else {
+                        setPage('studentJoin');
+                    }
+                } else {
+                    gameData = null;
+                    showMessage("La partie n'existe plus.");
+                    setPage('home');
+                }
+            }, error => {
+                console.error("Erreur onSnapshot:", error);
+                showMessage("Erreur lors de la connexion à la partie.");
+                setPage('home');
+            });
+        };
+
+        // Logique du jeu
+        const createGame = async () => {
+            const boardSize = parseInt(document.getElementById('board-size-select').value, 10);
+            const newBoard = generateSpiralBoard(boardSize);
+            const newGameId = generateRandomId();
+            const gameDocRef = db.collection('games').doc(newGameId);
+            const newGameData = {
+                board: newBoard,
+                boardSize: boardSize,
+                teams: [],
+                status: 'lobby',
+                teacherId: userId,
+                history: [],
+                startTime: null,
+                teamsToFinish: 1,
+            };
+            try {
+                await gameDocRef.set(newGameData);
+                gameId = newGameId;
+                window.location.hash = `#game_id=${gameId}`;
+                listenToGameData();
+            } catch (e) {
+                console.error("Erreur de création:", e);
+                showMessage("Impossible de créer la partie.");
+            }
+        };
+
+        const generateSpiralBoard = (size) => {
+            const board = [];
+            let bonusSquares = [13, 21, 46];
+            let malusSquares = [6, 30, 50];
+
+            if (size === 89) {
+                bonusSquares = [18, 29, 51, 64];
+                malusSquares = [8, 42, 58, 70];
+            }
+
+            for (let i = 1; i <= size; i++) {
+                let type = 'normal';
+                if (bonusSquares.includes(i)) type = 'bonus';
+                if (malusSquares.includes(i)) type = 'malus';
+                if (i === 1) type = 'start';
+                if (i === size) type = 'end';
+                board.push({ number: i, type: type });
+            }
+            return board;
+        };
+
+        const createTeam = async () => {
+            const player1Name = document.getElementById('player1-name-input').value.trim();
+            const player2Name = document.getElementById('player2-name-input').value.trim();
+
+            if (!player1Name || !player2Name) {
+                showMessage("Veuillez remplir tous les champs.");
+                return;
+            }
+
+            const teamName = `${player1Name} & ${player2Name}`;
+
+            const gameDocRef = db.collection('games').doc(gameId);
+            try {
+                await db.runTransaction(async (transaction) => {
+                    const doc = await transaction.get(gameDocRef);
+                    if (!doc.exists) {
+                        showMessage("La partie n'existe pas.");
+                        return;
+                    }
+                    if (doc.data().status !== 'lobby') {
+                        showMessage("La partie a déjà démarré. Vous ne pouvez plus la rejoindre.");
+                        return;
+                    }
+
+                    const newTeam = {
+                        id: userId,
+                        name: teamName,
+                        position: 1,
+                        selectedPlayerIndex: 0,
+                        members: [
+                            { name: player1Name, scores: [], hasSacrificed: false, totalPoints: 0, arrowsShot: 0, roundScore: null },
+                            { name: player2Name, scores: [], hasSacrificed: false, totalPoints: 0, arrowsShot: 0, roundScore: null }
+                        ],
+                        penaltyMessage: null,
+                        pendingPenalty: null,
+                        lastArrowTimestamp: null,
+                        turnTimes: [],
+                        penaltiesReceived: 0,
+                        finishTime: null
+                    };
+                    transaction.update(gameDocRef, { teams: firebase.firestore.FieldValue.arrayUnion(newTeam) });
+                });
+            } catch (e) {
+                console.error("Erreur en créant l'équipe:", e);
+                showMessage("Impossible de créer l'équipe.");
+            }
+        };
+
+        const deleteTeam = async (teamIdToDelete) => {
+            const confirmation = confirm("Êtes-vous sûr de vouloir supprimer cette équipe ?");
+            if (!confirmation) return;
+
+            const gameDocRef = db.collection('games').doc(gameId);
+            try {
+                await db.runTransaction(async (transaction) => {
+                    const doc = await transaction.get(gameDocRef);
+                    if (!doc.exists) return;
+
+                    const currentTeams = doc.data().teams;
+                    const updatedTeams = currentTeams.filter(team => team.id !== teamIdToDelete);
+                    transaction.update(gameDocRef, { teams: updatedTeams });
+                });
+            } catch (e) {
+                console.error("Erreur lors de la suppression de l'équipe:", e);
+                showMessage("Impossible de supprimer l'équipe.");
+            }
+        };
+
+        const startGame = async () => {
+            if (!gameData || gameData.teams.length === 0) {
+                showMessage("Il n'y a pas d'équipes pour démarrer la partie.");
+                return;
+            }
+            const gameDocRef = db.collection('games').doc(gameId);
+            const startTime = new Date().getTime();
+            const updatedTeams = gameData.teams.map(t => ({...t, lastArrowTimestamp: startTime }));
+
+            await gameDocRef.update({
+                status: 'playing',
+                startTime: firebase.firestore.FieldValue.serverTimestamp(),
+                teams: updatedTeams
+            });
+        };
+
+        const endPlayerTurn = (player) => {
+            if (player.roundScore !== null) return;
+
+            player.scores = player.scores || [];
+            const hits = player.scores.filter(s => s === 'hit').length;
+            const misses = player.scores.filter(s => s === 'miss').length;
+
+            player.roundScore = hits;
+            player.totalPoints = (player.totalPoints || 0) + hits;
+            player.arrowsShot = (player.arrowsShot || 0) + hits + misses;
+        };
+
+        const handleEndOfRound = (team) => {
+            let totalScore = 0;
+            team.members.forEach(member => {
+                totalScore += member.roundScore || 0;
+            });
+
+            let finalMessage = `Tour terminé ! Vous avancez de ${totalScore} cases.`;
+
+            const boardSize = gameData?.boardSize || 64;
+            let newPosition = team.position + totalScore;
+
+            let specialMessage = '';
+            // Cases bonus & malus
+            if ([13, 21, 18, 29].includes(newPosition)) { newPosition += 13; specialMessage = `Case bonus ! Avancez de 13 cases.`; }
+            else if (newPosition === 46 || newPosition === 64) { newPosition += 6; specialMessage = `Case bonus ! Avancez de 6 cases.`; }
+            else if (newPosition === 51) { newPosition += 10; specialMessage = `Case bonus ! Avancez de 10 cases.`; }
+            else if ([6, 8].includes(newPosition)) { newPosition -= 6; specialMessage = `Case malus ! Reculez de 6 cases.`; }
+            else if ([30, 42].includes(newPosition)) { newPosition -= 15; specialMessage = `Case malus ! Reculez de 15 cases.`; }
+            else if ([50, 70].includes(newPosition)) { newPosition -= 20; specialMessage = `Case malus ! Reculez de 20 cases.`; }
+            else if (newPosition === 58) { newPosition -= 10; specialMessage = `Case malus ! Reculez de 10 cases.`; }
+
+            if (newPosition < 1) newPosition = 1;
+            if (newPosition >= boardSize) {
+                newPosition = boardSize;
+                if (!team.finishTime) {
+                    team.finishTime = new Date().getTime();
+                }
+            }
+
+            if (specialMessage) { finalMessage += `\n${specialMessage}`; }
+
+            team.penaltyMessage = finalMessage;
+            team.position = newPosition;
+
+            team.members.forEach(m => {
+                m.scores = [];
+                m.roundScore = null;
+            });
+            team.selectedPlayerIndex = 0;
+            team.lastArrowTimestamp = new Date().getTime();
+        };
+
+        const recordLaserShot = async (shotType) => {
+            try {
+                const gameDocRef = db.collection('games').doc(gameId);
+                await db.runTransaction(async (transaction) => {
+                    const doc = await transaction.get(gameDocRef);
+                    if (!doc.exists) throw new Error("La partie n'existe plus.");
+
+                    const teams = doc.data().teams;
+                    const myTeam = teams.find(t => t.id === userId);
+                    if (!myTeam) throw new Error("Équipe non trouvée.");
+
+                    const player = myTeam.members[myTeam.selectedPlayerIndex];
+                    if (player.roundScore !== null) return;
+
+                    player.scores = player.scores || [];
+                    const hits = player.scores.filter(s => s === 'hit').length;
+
+                    if (shotType === 'hit' && hits >= HITS_TO_WIN_TURN) {
+                        return;
+                    }
+                    player.scores.push(shotType);
+
+                    const newHits = player.scores.filter(s => s === 'hit').length;
+                    if (newHits >= HITS_TO_WIN_TURN) {
+                        endPlayerTurn(player);
+                        const allPlayersDone = myTeam.members.every(m => m.roundScore !== null);
+                        if (allPlayersDone) {
+                            handleEndOfRound(myTeam);
+                        } else {
+                            myTeam.selectedPlayerIndex = (myTeam.selectedPlayerIndex + 1) % myTeam.members.length;
+                        }
+                    }
+
+                    transaction.update(gameDocRef, { teams: teams });
+                });
+            } catch (error) {
+                console.error("Erreur lors de l'enregistrement du tir:", error);
+                showMessage(`Une erreur est survenue: ${error.message}`);
+            }
+        };
+
+        const validateScore = async () => {
+            try {
+                const gameDocRef = db.collection('games').doc(gameId);
+                await db.runTransaction(async (transaction) => {
+                    const doc = await transaction.get(gameDocRef);
+                    if (!doc.exists) throw new Error("La partie n'existe plus.");
+
+                    const teams = doc.data().teams;
+                    const myTeam = teams.find(t => t.id === userId);
+                    if (!myTeam) throw new Error("Équipe non trouvée.");
+
+                    const player = myTeam.members[myTeam.selectedPlayerIndex];
+                    endPlayerTurn(player);
+
+                    const allPlayersDone = myTeam.members.every(m => m.roundScore !== null);
+                    if (allPlayersDone) {
+                        handleEndOfRound(myTeam);
+                    } else {
+                        myTeam.selectedPlayerIndex = (myTeam.selectedPlayerIndex + 1) % myTeam.members.length;
+                    }
+
+                    transaction.update(gameDocRef, { teams: teams });
+                });
+            } catch (error) {
+                console.error("Erreur validation:", error);
+                showMessage(`Une erreur est survenue: ${error.message}`);
+            }
+        };
+
+        const executeSacrifice = async (actionType, targetTeamId) => {
+            showMessage("Le sacrifice n'est pas encore entièrement adapté à la nouvelle logique.");
+        };
+
+        const switchPlayer = (team, playerIndex) => {
+            const player = team.members[team.selectedPlayerIndex];
+            if ((player.scores || []).length > 0 && player.roundScore === null) {
+                showMessage("Veuillez terminer le tour du joueur actuel avant de changer.");
+                return;
+            }
+            const gameDocRef = db.collection('games').doc(gameId);
+            db.runTransaction(async (transaction) => {
+                const docSnap = await transaction.get(gameDocRef);
+                if (!docSnap.exists) return;
+                const teams = docSnap.data().teams;
+                const myTeam = teams.find(t => t.id === userId);
+                if (myTeam) {
+                    myTeam.selectedPlayerIndex = playerIndex;
+                    transaction.update(gameDocRef, { teams: teams });
+                }
+            });
+        };
+
+        const resetGame = async () => {
+            const gameDocRef = db.collection('games').doc(gameId);
+            await db.runTransaction(async (transaction) => {
+                const docSnap = await transaction.get(gameDocRef);
+                if (!docSnap.exists) return;
+                const data = docSnap.data();
+                const updatedTeams = data.teams.map(t => ({
+                    ...t,
+                    position: 1,
+                    selectedPlayerIndex: 0,
+                    members: t.members.map(m => ({...m, scores: [], hasSacrificed: false, totalPoints: 0, arrowsShot: 0, roundScore: null })),
+                    lastArrowTimestamp: null,
+                    turnTimes: [],
+                    penaltiesReceived: 0
+                }));
+                transaction.update(gameDocRef, {
+                    teams: updatedTeams,
+                    history: [],
+                    status: 'playing',
+                    startTime: firebase.firestore.FieldValue.serverTimestamp(),
+                });
+            });
+        };
+
+        // Rendu des vues
+        const renderPage = () => {
+            appDiv.innerHTML = '';
+            let pageContent = '';
+
+            switch(currentPage) {
+                case 'home':
+                    pageContent = `
+                        <div class="flex flex-col items-center justify-center min-h-screen p-4 bg-stone-100 text-stone-800">
+                            <img src="oielogo.jpeg" alt="Logo" class="w-48 h-48 mb-8 rounded-full object-cover shadow-lg">
+                            <h1 class="text-4xl font-bold mb-8 text-center text-amber-700">Jeu de l'Oie Laser Run</h1>
+                            <p class="text-xl mb-6 text-center">Bienvenue ! Préparez votre pistolet laser.</p>
+                            <div class="w-full max-w-xs space-y-4">
+                                <div>
+                                    <label for="board-size-select" class="block text-sm font-medium text-stone-700 mb-1">Taille du plateau :</label>
+                                    <select id="board-size-select" class="mt-1 block w-full rounded-md border-stone-300 shadow-sm focus:border-amber-700 focus:ring focus:ring-amber-200 focus:ring-opacity-50 p-3">
+                                        <option value="64">Normal (64 cases)</option>
+                                        <option value="89">Grand (89 cases)</option>
+                                    </select>
+                                </div>
+                                <button id="create-game-btn" class="bg-green-700 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg shadow-xl transition-all transform hover:scale-105 w-full">
+                                    Créer une nouvelle partie
+                                </button>
+                                <a href="chrono.html" class="block text-center text-sm text-amber-700 hover:underline pt-2">Utiliser le chronomètre Laser Run (outil solo)</a>
+                            </div>
+                        </div>
+                    `;
+                    appDiv.innerHTML = pageContent;
+                    document.getElementById('create-game-btn').onclick = createGame;
+                    break;
+                case 'teacherSetup':
+                    const gameUrl = `${window.location.origin}${window.location.pathname}#game_id=${gameId}`;
+                    pageContent = `
+                        <div class="flex h-screen w-screen overflow-hidden p-4 bg-stone-100 text-stone-800">
+                            <div class="w-1/2 h-full flex flex-col p-2">
+                                <h2 class="text-3xl font-bold mb-4 text-amber-700 text-center">Plateau de jeu</h2>
+                                <div id="game-board" class="flex-grow bg-stone-200 p-6 rounded-xl shadow-lg relative"></div>
+                                <div class="flex items-center justify-center mt-2">
+                                    <input type="checkbox" id="show-names-checkbox" class="h-4 w-4 text-amber-600 focus:ring-amber-500 border-gray-300 rounded">
+                                    <label for="show-names-checkbox" class="ml-2 block text-sm text-gray-900">
+                                        Afficher les noms des équipes
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="w-1/2 h-full flex flex-col p-2 overflow-y-auto">
+                                <h2 class="text-3xl font-bold mb-4 text-amber-700 text-center">Interface du Professeur</h2>
+                                <p class="text-xl text-center mb-6">ID de la partie: <span class="font-mono bg-stone-300 px-2 py-1 rounded-md">${gameId}</span></p>
+                                <div class="bg-white p-6 rounded-xl shadow-lg mb-6 w-full text-center">
+                                    <p class="text-lg font-semibold mb-4">Partagez ce QR code avec vos élèves :</p>
+                                    <canvas id="qr-code-canvas" class="bg-white p-2 rounded-lg mx-auto border-2 border-stone-300"></canvas>
+                                    <p class="text-sm mt-4 break-all">Ou partagez ce lien : <a href="${gameUrl}" class="text-amber-700 hover:underline">${gameUrl}</a></p>
+                                </div>
+                                <div class="bg-white p-6 rounded-xl shadow-lg w-full mb-6">
+                                    <h3 class="text-2xl font-bold mb-4">Équipes connectées (${gameData.teams.length})</h3>
+                                    <ul id="teams-list" class="list-disc list-inside space-y-1"></ul>
+                                </div>
+                                <div class="bg-white p-6 rounded-xl shadow-lg w-full mb-6">
+                                    <h3 class="text-2xl font-bold mb-4">Options de la partie</h3>
+                                    <div>
+                                        <label for="teams-to-finish-input" class="block text-sm font-medium text-stone-700 mb-1">Nombre d'équipes à l'arrivée pour finir :</label>
+                                        <input type="number" id="teams-to-finish-input" class="mt-1 block w-full rounded-md border-stone-300 shadow-sm focus:border-amber-700 focus:ring focus:ring-amber-200 focus:ring-opacity-50 p-3" value="${gameData.teamsToFinish || 1}">
+                                    </div>
+                                </div>
+                                <button id="start-game-btn" class="mt-6 bg-amber-700 hover:bg-amber-600 text-white font-bold py-3 px-6 rounded-lg shadow-xl transition-all transform hover:scale-105 w-full">
+                                    Démarrer la partie
+                                </button>
+                                <button id="tutorial-btn" class="mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-md w-full">
+                                    📜 Afficher le Tutoriel
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                    appDiv.innerHTML = pageContent;
+                    document.getElementById('start-game-btn').onclick = startGame;
+                    document.getElementById('tutorial-btn').onclick = () => {
+                        document.getElementById('tutorial-modal').classList.remove('hidden');
+                    };
+                    document.getElementById('show-names-checkbox').addEventListener('change', () => renderGameBoard(gameData.board, gameData.teams));
+                    document.getElementById('teams-to-finish-input').addEventListener('change', (e) => {
+                        const value = parseInt(e.target.value, 10);
+                        if (value > 0) {
+                            const gameDocRef = db.collection('games').doc(gameId);
+                            gameDocRef.update({ teamsToFinish: value });
+                        }
+                    });
+                    generateQRCode(gameUrl);
+                    renderTeamList(gameData.teams);
+                    renderGameBoard(gameData.board, gameData.teams);
+                    break;
+                case 'teacherGame':
+                    const teacherTeams = gameData?.teams || [];
+                    const teacherBoard = gameData?.board || [];
+                    if (gameData.status === 'finished') {
+                        pageContent = `
+                            <div class="flex h-screen w-screen overflow-hidden p-4 bg-stone-100 text-stone-800">
+                                <div class="w-1/2 h-full flex flex-col p-2 items-center justify-center">
+                                    <h2 class="text-3xl font-bold mb-4 text-amber-700 text-center">Partie terminée !</h2>
+                                    ${renderLeaderboard(teacherTeams)}
+                                    <div class="bg-white p-4 rounded-xl shadow-lg mb-4 mt-4">
+                                        <h3 class="text-2xl font-bold mb-2 text-center">Statistiques des Équipes</h3>
+                                        <ul id="game-teams-list" class="flex flex-wrap justify-center gap-4"></ul>
+                                    </div>
+                                </div>
+                                <div class="w-1/2 h-full flex flex-col p-2 overflow-y-auto">
+                                    <div id="game-board" class="flex-grow bg-white p-2 rounded-xl shadow-lg relative"></div>
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        pageContent = `
+                        <div class="flex h-screen w-screen overflow-hidden p-4 bg-stone-100 text-stone-800">
+                            <div class="w-1/2 h-full flex flex-col p-2">
+                                <h2 class="text-3xl font-bold mb-4 text-amber-700 text-center">Course Laser Run</h2>
+                                <div id="game-board" class="flex-grow bg-white p-2 rounded-xl shadow-lg relative"></div>
+                                <div class="flex items-center justify-center mt-2">
+                                    <input type="checkbox" id="show-names-checkbox" class="h-4 w-4 text-amber-600 focus:ring-amber-500 border-gray-300 rounded">
+                                    <label for="show-names-checkbox" class="ml-2 block text-sm text-gray-900">
+                                        Afficher les noms des équipes
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="w-1/2 h-full flex flex-col p-2 overflow-y-auto">
+                                <div class="bg-white p-4 rounded-xl shadow-lg mb-4">
+                                    <h3 class="text-2xl font-bold mb-2 text-center">Statistiques des Équipes</h3>
+                                    <ul id="game-teams-list" class="flex flex-wrap justify-center gap-4"></ul>
+                                </div>
+                                <button id="tutorial-btn" class="mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-md w-full">
+                                    📜 Afficher le Tutoriel
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                    }
+                    appDiv.innerHTML = pageContent;
+                    updateTimer();
+                    if (gameData.status === 'finished') {
+                        renderGameTeams(teacherTeams);
+                    } else {
+                        document.getElementById('tutorial-btn').onclick = () => {
+                            document.getElementById('tutorial-modal').classList.remove('hidden');
+                        };
+                        document.getElementById('show-names-checkbox').addEventListener('change', () => renderGameBoard(gameData.board, gameData.teams));
+                        renderGameTeams(teacherTeams);
+                    }
+                    renderGameBoard(teacherBoard, teacherTeams);
+                    break;
+                case 'studentGame':
+                    const studentTeams = gameData?.teams || [];
+                    const studentBoard = gameData?.board || [];
+                    const myTeam = studentTeams.find(t => t.id === userId);
+                    const boardSize = gameData?.boardSize || 64;
+
+                    let pageBodyHtml = '';
+                    if (gameData.status === 'finished') {
+                        pageBodyHtml = renderLeaderboard(studentTeams);
+                    } else {
+                        const hasWinner = studentTeams.some(t => t.position >= boardSize);
+                        if (hasWinner) {
+                             pageBodyHtml = `
+                                <div class="text-center p-8 bg-green-200 rounded-xl shadow-lg w-full max-w-md">
+                                    <p class="text-3xl font-extrabold text-green-800 mb-2">Partie terminée !</p>
+                                    <p class="text-2xl font-bold text-stone-700">Le vainqueur est : <span class="text-green-600">${studentTeams.find(t => t.position >= boardSize)?.name}</span></p>
+                                </div>
+                            `;
+                        } else if (myTeam) {
+                            if (gameData.status === 'playing') {
+                                pageBodyHtml = `
+                                    <div class="mb-6 w-full max-w-md bg-white p-6 rounded-xl shadow-lg">
+                                        <h3 class="text-xl font-bold mb-4 text-center">
+                                            Équipe ${myTeam.name}
+                                        </h3>
+                                        <div id="player-scores"></div>
+                                        <div id="score-input-container" class="mt-4"></div>
+                                        <div class="mt-4 space-y-2">
+                                            <button id="validate-score-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg shadow-md transition-colors">
+                                                Valider / Temps écoulé
+                                            </button>
+                                        </div>
+                                    </div>
+                                `;
+                            } else {
+                                pageBodyHtml = `
+                                    <div class="mb-6 w-full max-w-md bg-white p-6 rounded-xl shadow-lg text-center">
+                                        <p class="text-xl font-bold text-stone-700">En attente du professeur pour démarrer la partie...</p>
+                                    </div>
+                                `;
+                            }
+                        }
+                    }
+
+                    pageContent = `
+                        <div class="flex h-screen w-screen overflow-hidden p-4 bg-stone-100 text-stone-800">
+                            <div class="w-1/2 h-full flex flex-col p-2">
+                                <h2 class="text-3xl font-bold mb-4 text-amber-700 text-center">Course Laser Run</h2>
+                                <div id="game-board" class="flex-grow bg-white p-2 rounded-xl shadow-lg relative"></div>
+                                <div class="flex items-center justify-center mt-2">
+                                    <input type="checkbox" id="show-names-checkbox" class="h-4 w-4 text-amber-600 focus:ring-amber-500 border-gray-300 rounded">
+                                    <label for="show-names-checkbox" class="ml-2 block text-sm text-gray-900">
+                                        Afficher les noms des équipes
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="w-1/2 h-full flex flex-col p-2 overflow-y-auto items-center justify-center">
+                                ${pageBodyHtml}
+                            </div>
+                        </div>
+                    `;
+                    appDiv.innerHTML = pageContent;
+                    updateTimer();
+
+                    if (gameData.status !== 'finished' && myTeam) {
+                        if (document.getElementById('validate-score-btn')) {
+                            document.getElementById('validate-score-btn').onclick = validateScore;
+                        }
+                        renderPlayerScores(myTeam);
+                        renderLaserInputs(myTeam);
+                    }
+                    document.getElementById('show-names-checkbox').addEventListener('change', () => renderGameBoard(gameData.board, gameData.teams));
+                    renderGameBoard(studentBoard, studentTeams);
+                    break;
+                case 'studentJoin':
+                    pageContent = `
+                        <div class="flex flex-col items-center justify-center min-h-screen p-4 bg-stone-100 text-stone-800">
+                            <h2 class="text-3xl font-bold mb-4 text-amber-700">Créer une Équipe</h2>
+                            <div class="bg-white p-6 rounded-xl shadow-lg w-full max-w-sm">
+                                <p class="text-center text-lg mb-4">ID de la partie : <span class="font-mono font-bold">${gameId}</span></p>
+                                <input id="player1-name-input" type="text" placeholder="Prénom du joueur 1" class="w-full p-3 mb-4 border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none">
+                                <input id="player2-name-input" type="text" placeholder="Prénom du joueur 2" class="w-full p-3 mb-4 border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none">
+                                <button id="create-team-btn" class="w-full bg-stone-700 hover:bg-stone-600 text-white font-bold py-3 px-6 rounded-lg shadow-xl transition-all transform hover:scale-105">
+                                    Créer l'Équipe
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                    appDiv.innerHTML = pageContent;
+                    document.getElementById('create-team-btn').onclick = createTeam;
+                    break;
+                default:
+                    appDiv.innerHTML = `<div class="text-center text-stone-700"><p class="text-2xl font-semibold animate-pulse">Chargement...</p></div>`;
+            }
+        };
+
+        const renderTeamList = (teams) => {
+            const list = document.getElementById('teams-list');
+            if (!list) return;
+            list.innerHTML = '';
+
+            if (teams.length > 0) {
+                teams.forEach((team, index) => {
+                    const teamColor = teamColors[index % teamColors.length];
+                    const playerNames = team.members.map(m => m.name).join(' & ');
+
+                    const li = document.createElement('li');
+                    li.className = 'flex items-center justify-between mb-2 p-2 rounded-lg bg-stone-50';
+                    li.innerHTML = `
+                        <div class="flex items-center">
+                            <div class="w-3 h-3 rounded-full mr-3" style="background-color: ${teamColor};"></div>
+                            <div>
+                                <span class="font-bold text-stone-800">${team.name}</span>
+                                <span class="text-sm text-stone-600 ml-2">(${playerNames})</span>
+                            </div>
+                        </div>
+                    `;
+
+                    const deleteButton = document.createElement('button');
+                    deleteButton.className = 'text-red-500 hover:text-red-700 font-bold';
+                    deleteButton.textContent = 'Supprimer';
+                    deleteButton.onclick = () => deleteTeam(team.id);
+                    li.appendChild(deleteButton);
+
+                    list.appendChild(li);
+                });
+            } else {
+                list.innerHTML = `<p class="text-stone-500">En attente d'équipes...</p>`;
+            }
+        };
+
+        const renderGameTeams = (teams) => {
+            const list = document.getElementById('game-teams-list');
+            if (!list) return;
+            list.innerHTML = '';
+
+            teams.forEach((team, index) => {
+                const teamColor = teamColors[index % teamColors.length];
+                const playerNames = team.members.map(m => m.name).join(' & ');
+                const avgTurnTime = team.turnTimes && team.turnTimes.length > 0
+                    ? Math.round(team.turnTimes.reduce((a, b) => a + b, 0) / team.turnTimes.length)
+                    : 0;
+                const formattedAvgTurnTime = formatTime(avgTurnTime);
+
+                const li = document.createElement('li');
+                li.className = `p-3 rounded-lg shadow-md w-64 bg-white`;
+
+                li.innerHTML = `
+                    <div class="flex items-center border-b border-stone-200 pb-2 mb-2">
+                        <div class="w-4 h-4 rounded-full" style="background-color: ${teamColor};"></div>
+                        <div class="ml-3">
+                            <div class="text-lg font-bold text-stone-800">${team.name}</div>
+                            <div class="text-xs text-stone-500">Case ${team.position}</div>
+                        </div>
+                    </div>
+                    <div class="text-sm text-stone-700 font-semibold">${playerNames}</div>
+                    <div class="text-xs text-stone-600 mt-2 space-y-1">
+                        ${team.members.map(m => {
+                            const avgScore = m.arrowsShot ? (m.totalPoints / m.arrowsShot).toFixed(1) : 0;
+                            return `<div>${m.name}: <strong>${m.totalPoints || 0} pts</strong> / ${m.arrowsShot || 0} tirs (${avgScore} moy.)</div>`
+                        }).join('')}
+                    </div>
+                    <div class="text-xs text-stone-500 mt-2 pt-2 border-t border-stone-200">Temps moyen/tour: <strong>${formattedAvgTurnTime}</strong></div>
+                `;
+                list.appendChild(li);
+            });
+        };
+
+        const renderLeaderboard = (teams) => {
+            const sortedTeams = [...teams].sort((a, b) => {
+                if (a.position === b.position) {
+                    return (a.finishTime || Infinity) - (b.finishTime || Infinity);
+                }
+                return b.position - a.position;
+            });
+
+            let leaderboardHtml = '<div class="bg-white p-6 rounded-xl shadow-lg w-full max-w-md"><h3 class="text-2xl font-bold mb-4 text-center">Classement final</h3><ol class="list-decimal list-inside space-y-2">';
+            sortedTeams.forEach(team => {
+                leaderboardHtml += `<li class="text-lg"><span class="font-bold">${team.name}</span> - Case ${team.position}</li>`;
+            });
+            leaderboardHtml += '</ol></div>';
+            return leaderboardHtml;
+        };
+
+        const renderPlayerScores = (team) => {
+            const scoresDiv = document.getElementById('player-scores');
+            if (!scoresDiv || !team) return;
+            scoresDiv.innerHTML = '';
+            scoresDiv.className = 'flex justify-around items-start';
+
+            team.members.forEach((member, index) => {
+                const memberDiv = document.createElement('div');
+                memberDiv.className = 'flex flex-col items-center gap-2';
+
+                const nameButton = document.createElement('button');
+                nameButton.textContent = member.name;
+                nameButton.className = `font-semibold py-1 px-4 rounded-lg ${team.selectedPlayerIndex === index && member.roundScore === null ? 'bg-amber-600 text-white' : 'bg-stone-200 text-stone-800'}`;
+                nameButton.onclick = () => switchPlayer(team, index);
+
+                const ledsContainer = document.createElement('div');
+                ledsContainer.className = 'flex justify-center gap-2 mt-1';
+
+                const shots = member.scores || [];
+                const hits = shots.filter(s => s === 'hit').length;
+
+                for (let i = 0; i < HITS_TO_WIN_TURN; i++) {
+                    const led = document.createElement('div');
+                    led.className = 'led-indicator';
+                    if (i < hits) {
+                        led.classList.add('led-hit');
+                    }
+                    ledsContainer.appendChild(led);
+                }
+
+                memberDiv.appendChild(nameButton);
+                memberDiv.appendChild(ledsContainer);
+                scoresDiv.appendChild(memberDiv);
+            });
+        };
+
+        const renderLaserInputs = (team) => {
+            const scoreInputContainer = document.getElementById('score-input-container');
+            const validateBtn = document.getElementById('validate-score-btn');
+            if (!scoreInputContainer || !validateBtn) return;
+            scoreInputContainer.innerHTML = '';
+
+            const currentPlayer = team.members[team.selectedPlayerIndex];
+
+            if (currentPlayer.roundScore !== null) {
+                scoreInputContainer.innerHTML = `<p class="text-center text-stone-600 font-bold">En attente de l'autre joueur...</p>`;
+                validateBtn.disabled = true;
+                return;
+            }
+
+            validateBtn.disabled = false;
+            const hits = (currentPlayer.scores || []).filter(s => s === 'hit').length;
+            const canHit = hits < HITS_TO_WIN_TURN;
+
+            scoreInputContainer.innerHTML = `
+                <p class="text-center text-stone-600 mb-2">Au tour de <strong>${currentPlayer.name}</strong></p>
+                <div class="grid grid-cols-2 gap-4">
+                    <button id="btn-miss" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-4 px-4 rounded-lg shadow-md transition-colors text-lg">
+                        Tir Raté
+                    </button>
+                    <button id="btn-hit" ${!canHit ? 'disabled' : ''} class="bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-4 rounded-lg shadow-md transition-colors text-lg ${!canHit ? 'opacity-50 cursor-not-allowed' : ''}">
+                        Tir Réussi
+                    </button>
+                </div>
+            `;
+            document.getElementById('btn-miss').onclick = () => recordLaserShot('miss');
+            document.getElementById('btn-hit').onclick = () => recordLaserShot('hit');
+        };
+
+        const renderGameBoard = (board, teams) => {
+            const container = document.getElementById('game-board');
+            if (!container) return;
+            container.innerHTML = '';
+
+            const showNamesCheckbox = document.getElementById('show-names-checkbox');
+            const showNames = showNamesCheckbox ? showNamesCheckbox.checked : false;
+            const boardSize = gameData?.boardSize || 64;
+
+            let x = 0, y = 0;
+            let step = 40;
+            let direction = 3;
+            let stepsInCurrentDirection = 0;
+
+            let segments;
+            if (boardSize === 89) {
+                segments = [11, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
+            } else {
+                segments = [9, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
+            }
+
+            let segmentIndex = 0;
+            let countToChange = segments[segmentIndex];
+
+            for(let i = 0; i < boardSize; i++) {
+                const caseNumber = i + 1;
+                const squareData = board.find(s => s.number === caseNumber);
+
+                const newCase = document.createElement('div');
+                newCase.classList.add('case');
+                if(squareData) newCase.classList.add(squareData.type);
+                newCase.style.left = x + 'px';
+                newCase.style.top = y + 'px';
+                newCase.textContent = caseNumber;
+
+                if (caseNumber === 1) newCase.textContent = "Départ";
+                if (caseNumber === boardSize) newCase.textContent = "Arrivée";
+
+                container.appendChild(newCase);
+
+                // Add pawns
+                const teamsOnThisCase = teams.filter(t => t.position === caseNumber);
+                teamsOnThisCase.forEach((team, pawnIndex) => {
+                    const originalTeamIndex = teams.findIndex(t => t.id === team.id);
+                    const pawn = document.createElement('div');
+                    pawn.style.width = '12px';
+                    pawn.style.height = '12px';
+                    pawn.style.borderRadius = '50%';
+                    pawn.style.backgroundColor = teamColors[originalTeamIndex % teamColors.length];
+                    pawn.style.border = '1px solid #000';
+                    pawn.style.position = 'absolute';
+                    pawn.style.left = (2 + pawnIndex * 14) + 'px';
+                    pawn.style.top = '2px';
+                    pawn.title = team.name;
+
+                    if (team.id === userId) {
+                        pawn.classList.add('my-team-pawn');
+                    }
+
+                    if (showNames) {
+                        const nameLabel = document.createElement('div');
+                        nameLabel.className = 'pawn-name-label';
+                        nameLabel.textContent = team.name;
+                        pawn.style.position = 'relative'; // For label positioning
+                        pawn.appendChild(nameLabel);
+                    }
+
+                    newCase.appendChild(pawn);
+                });
+
+                switch(direction) {
+                    case 1: y -= step; break; // Up
+                    case 2: x += step; break; // Right
+                    case 3: y += step; break; // Down
+                    case 4: x -= step; break; // Left
+                }
+
+                stepsInCurrentDirection++;
+                if(stepsInCurrentDirection === countToChange) {
+                    stepsInCurrentDirection = 0;
+                    direction = direction === 1 ? 4 : direction - 1;
+                    segmentIndex++;
+                    if (segmentIndex < segments.length) {
+                        countToChange = segments[segmentIndex];
+                    }
+                }
+            }
+        };
+
+        const generateQRCode = (gameUrl) => {
+            const canvas = document.getElementById('qr-code-canvas');
+            if (canvas && window.QRCode) {
+                window.QRCode.toCanvas(canvas, gameUrl, { width: 256 }, (error) => {
+                    if (error) console.error('Erreur lors de la génération du QR Code', error);
+                });
+            }
+        };
+
+    </script>
+    <footer class="text-center text-xs text-stone-500 py-4">
+        Labo EPS VAUBAN – Lycée VAUBAN
+    </footer>
+</body>
+</html>
